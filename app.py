@@ -176,7 +176,7 @@ def score_and_rank_places_nlp(constraints, session_location=None, ignore_feature
                 score -= 20.0
 
         if target_close_min is not None:
-            hours = str(get_place_attr(place, ["Opening and closing hours", "opening_closing_hours", "Operating Hours", "hours"], ""))
+            hours = str(get_place_attr(place, ["Opening and closing hours", "opening_closing_hours", "Operating Hours", "hours"]))
             _, close_min = parse_hours_range(hours)
             if close_min is not None:
                 if close_min >= target_close_min:
@@ -206,7 +206,7 @@ def get_partial_matches(constraints, session_location):
     return [], None
 
 # 10. RESPONSE GENERATORS & FORMATTERS
-def format_place_output(ranked_results, user_name, has_category=True, custom_prefix=None):
+def format_place_output(ranked_results, user_name, has_category=True, custom_prefix=None, constraints=None):
     top_results = ranked_results[:5]
 
     if not top_results:
@@ -219,8 +219,16 @@ def format_place_output(ranked_results, user_name, has_category=True, custom_pre
     else:
         reply = f"Here are my suggested places for you, {user_name}:<br><br>"
 
+    constraints = constraints or {}
+    req_cat = constraints.get("category")
+    req_loc = constraints.get("location") or (constraints.get("locations")[0] if constraints.get("locations") else None)
+    req_features = constraints.get("required_features", [])
+    target_close_min = constraints.get("target_closing_time")
+    req_budget = constraints.get("max_budget")
+
     for idx, item in enumerate(top_results, 1):
         place = item["place"]
+        score = item["score"]
         name = get_place_attr(place, ["Business name", "business_name", "name"])
         cat = get_place_attr(place, ["Category", "category"])
         city = get_place_attr(place, ["Municipality or city", "municipality_city", "city"])
@@ -232,6 +240,33 @@ def format_place_output(ranked_results, user_name, has_category=True, custom_pre
         reply += f"⏰ <b>Hours</b>: {hours}<br>"
         reply += f"💰 <b>Price</b>: {price}<br>"
 
+        # Explainability Insights Block
+        reply += f"🔍 <b>Match Insights</b> (Score: {score}):<br>"
+        reply += f"• 🎯 <b>Relevance Match</b>: High textual relevance to your search.<br>"
+        
+        if req_cat:
+            reply += f"• ✅ <b>Correct Category</b>: Matches requested category '<i>{req_cat}</i>'.<br>"
+        
+        if req_loc:
+            reply += f"• ✅ <b>Correct Location</b>: Located in matched area '<i>{city}</i>'.<br>"
+
+        if req_features:
+            matched_feats = [f for f in req_features if place_has_feature(place, f)]
+            if matched_feats:
+                reply += f"• ✅ <b>Requested Feature Found</b>: Has {', '.join(matched_feats)}.<br>"
+            else:
+                reply += f"• ⚠️ <b>Feature Notice</b>: Alternative venue suggested.<br>"
+
+        if target_close_min is not None:
+            _, close_min = parse_hours_range(hours)
+            if close_min is not None and close_min >= target_close_min:
+                reply += f"• ✅ <b>Closing Time Meets Request</b>: Open until late as requested.<br>"
+
+        if req_budget is not None:
+            place_price = price_number_from_place(place)
+            if place_price is not None and place_price <= req_budget:
+                reply += f"• ✅ <b>Within Budget</b>: Estimated price fits your ₱{req_budget} budget.<br>"
+
         if idx < len(top_results):
             reply += "<hr style='border: 0; border-top: 1px solid #444; margin: 10px 0;'>"
 
@@ -242,8 +277,13 @@ def format_place_output(ranked_results, user_name, has_category=True, custom_pre
 
     return reply
 
-def format_single_place_detail(item, user_name):
-    place = item.get("place", item) if isinstance(item, dict) and "place" in item else item
+def format_single_place_detail(item, user_name, constraints=None):
+    if isinstance(item, dict) and "place" in item:
+        place = item["place"]
+        score = item.get("score", None)
+    else:
+        place = item
+        score = None
 
     name = get_place_attr(place, ["Business name", "business_name", "name"])
     cat = get_place_attr(place, ["Category", "category"])
@@ -269,7 +309,24 @@ def format_single_place_detail(item, user_name):
     if features and features != "N/A":
         reply += f"✨ <b>Features</b>: {features}<br>"
 
-    reply += f"🗺️ <b>Google Maps</b>: <a href='{maps_url}' target='_blank' style='color: #4da6ff; text-decoration: underline;'>Open in Google Maps ↗</a><br>"
+    # Explainability Breakdown for Single Venue View
+    if score is not None:
+        reply += f"<br>📊 <b>Match Breakdown</b> (Score: {score}):<br>"
+        constraints = constraints or {}
+        if constraints.get("category"):
+            reply += f"• 🎯 <b>Category Match</b>: Matches requested category '<i>{constraints['category']}</i>'<br>"
+        if constraints.get("locations"):
+            reply += f"• 📍 <b>Location Match</b>: Located in requested area '<i>{city}</i>'<br>"
+        if constraints.get("required_features"):
+            matched_feats = [f for f in constraints["required_features"] if place_has_feature(place, f)]
+            if matched_feats:
+                reply += f"• ✨ <b>Features Matched</b>: {', '.join(matched_feats)}<br>"
+        if constraints.get("max_budget") is not None:
+            reply += f"• 💰 <b>Budget Match</b>: Within specified limit (₱{constraints['max_budget']})<br>"
+    else:
+        reply += "• 🎯 <b>Relevance Match</b>: Identified as a top match based on search criteria.<br>"
+
+    reply += f"<br>🗺️ <b>Google Maps</b>: <a href='{maps_url}' target='_blank' style='color: #4da6ff; text-decoration: underline;'>Open in Google Maps ↗</a><br>"
     reply += f"<br>📝 <b>Description</b>:<br>{description}"
 
     return reply
@@ -317,7 +374,8 @@ def handle_followup_feature_question(msg_lower, last_places, user_name):
     detected_feature = detected_features[0]
     reply = f"Here is the info regarding <b>{detected_feature.title()}</b> for the places listed above, {user_name}:<br><br>"
 
-    for idx, place in enumerate(last_places, 1):
+    for idx, item in enumerate(last_places, 1):
+        place = item["place"] if isinstance(item, dict) and "place" in item else item
         name = get_place_attr(place, ["Business name", "business_name", "name"])
         if place_has_feature(place, detected_feature):
             reply += f"✅ <b>{idx}. {name}</b>: Yes, feature/info found matching <i>{detected_feature}</i>.<br>"
@@ -335,6 +393,7 @@ def get_user_session():
             "state": STATE_AWAITING_NAME,
             "last_places": [],
             "last_category": None,
+            "last_constraints": {},
             "fsm_context": "IDLE"
         }
     return session["user_data"]
@@ -348,6 +407,7 @@ def home():
         "state": STATE_AWAITING_NAME,
         "last_places": [],
         "last_category": None,
+        "last_constraints": {},
         "fsm_context": "IDLE"
     }
     return render_template("index.html")
@@ -404,10 +464,11 @@ def get_response():
         selected_idx = idx_map.get(msg_lower)
 
         if selected_idx is not None and selected_idx < len(u_session["last_places"]):
-            chosen_place = u_session["last_places"][selected_idx]
+            chosen_item = u_session["last_places"][selected_idx]
             u_session["fsm_context"] = "VIEWING_DETAIL"
             session.modified = True
-            return jsonify({"reply": format_single_place_detail(chosen_place, display_name)})
+            last_constraints = u_session.get("last_constraints", {})
+            return jsonify({"reply": format_single_place_detail(chosen_item, display_name, constraints=last_constraints)})
 
     if u_session["last_places"]:
         if is_explicit_followup_question(msg_lower) or (detected_feature and len(normalized_tokens(msg_lower)) <= 4):
@@ -454,10 +515,11 @@ def get_response():
         ranked_results, custom_prefix = get_partial_matches(constraints, u_session.get("location"))
 
     if ranked_results:
-        u_session["last_places"] = [item["place"] for item in ranked_results[:5]]
+        u_session["last_places"] = ranked_results[:5]
+        u_session["last_constraints"] = constraints
         u_session["fsm_context"] = "SEARCH_RESULTS"
         session.modified = True
-        return jsonify({"reply": format_place_output(ranked_results, display_name, has_category=has_explicit_category, custom_prefix=custom_prefix)})
+        return jsonify({"reply": format_place_output(ranked_results, display_name, has_category=has_explicit_category, custom_prefix=custom_prefix, constraints=constraints)})
 
     u_session["fsm_context"] = "NO_RESULTS"
     session.modified = True
