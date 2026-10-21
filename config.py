@@ -1,3 +1,4 @@
+# config.py
 # 1. APPLICATION & SYSTEM STATE INITIALIZATION
 STATE_AWAITING_NAME = "AWAITING_NAME"
 STATE_IDLE = "IDLE"
@@ -13,7 +14,15 @@ MUNICIPALITY_ALIASES = {
     "paoay": ["paoay"],
 }
 
-# Explicitly track nearby Ilocos Norte towns that are OUT OF SCOPE
+# Coordinates for Haversine Distance Calculations
+GEOGRAPHIC_COORDINATES = {
+    "laoag": (18.1960, 120.5927),
+    "batac": (18.0558, 120.5650),
+    "san nicolas": (18.1725, 120.5960),
+    "bacarra": (18.2508, 120.6122),
+    "paoay": (18.0617, 120.5233),
+}
+
 UNSUPPORTED_LOCATIONS = [
     "pagudpud", "bangui", "burgos", "sarrat", "vintar", 
     "piddig", "pasuquin", "solsona", "badoc", "currimao", "dingras"
@@ -60,7 +69,7 @@ CATEGORY_SYNONYMS = {
 }
 
 LOCAL_DISHES = [
-    "empanada", "bagnet", "poqui poqui", "poqui-poqui", "poquipoqui",
+    "salmon","empanada", "bagnet", "poqui poqui", "poqui-poqui", "poquipoqui",
     "longganisa", "igado", "dinakdakan", "pinakbet", "royal bibingka", "miki"
 ]
 
