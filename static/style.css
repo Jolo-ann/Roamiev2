@@ -42,7 +42,6 @@ body {
     z-index: 1;
 }
 
-/* Base Desktop / Windows Wide Layout */
 .chat-container {
     position: relative;
     z-index: 2;
@@ -219,6 +218,37 @@ body {
     box-shadow: 0 4px 14px rgba(2, 132, 199, 0.3);
 }
 
+/* Action Choice Buttons Styling */
+.action-buttons-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: -6px;
+    align-self: flex-start;
+    max-width: 85%;
+    animation: fadeIn 0.3s ease-out;
+}
+
+.action-btn {
+    background: linear-gradient(135deg, rgba(20, 184, 166, 0.25), rgba(2, 132, 199, 0.35));
+    border: 1px solid rgba(20, 184, 166, 0.5);
+    color: #f8fafc;
+    padding: 8px 14px;
+    border-radius: 20px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.action-btn:hover {
+    background: linear-gradient(135deg, var(--accent-teal), #0284c7);
+    border-color: var(--accent-teal);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(20, 184, 166, 0.4);
+}
+
 .typing-indicator {
     display: flex;
     align-items: center;
@@ -375,97 +405,61 @@ input::placeholder {
     border: 1px solid var(--border-color);
 }
 
-/* ==========================================
-   Responsive Breakpoints
-   ========================================== */
-
-/* Ultra-wide Monitors (Windows / Large Screens) */
-@media (min-width: 1400px) {
-    .chat-container {
-        max-width: 950px;
-    }
-}
-
-/* Tablet & Intermediate Views */
-@media (min-width: 521px) and (max-width: 768px) {
-    .chat-container {
-        height: 85vh;
-        width: 92%;
-        max-width: 650px;
-    }
-}
-
-/* Mobile Devices (Android / iOS standard viewports) */
+/* Responsive Adjustments */
 @media (max-width: 520px) {
-    body {
-        padding: 0;
-        align-items: stretch;
-    }
-
-    .chat-container {
-        width: 100%;
+    .action-buttons-container {
         max-width: 100%;
-        height: 100dvh;
-        border-radius: 0;
-        border: none;
-        box-shadow: none;
     }
+    
+    .action-btn {
+        width: 100%;
+        text-align: center;
+    }
+}
 
-    .chat-header {
-        padding: 12px 14px;
-    }
+/* Add this to style.css */
+.inline-detail-btn {
+    background: linear-gradient(135deg, rgba(20, 184, 166, 0.3), rgba(2, 132, 199, 0.4));
+    border: 1px solid var(--accent-teal);
+    color: #f8fafc;
+    padding: 6px 12px;
+    border-radius: 12px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 8px;
+    margin-bottom: 4px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    transition: all 0.2s ease;
+}
 
-    .brand-text h2 {
-        font-size: 1rem;
-    }
+.inline-detail-btn:hover {
+    background: linear-gradient(135deg, var(--accent-teal), #0284c7);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(20, 184, 166, 0.3);
+}
 
-    .brand-text .subtitle {
-        font-size: 0.7rem;
-    }
+.inline-place-btn {
+    background: linear-gradient(135deg, rgba(20, 184, 166, 0.35), rgba(2, 132, 199, 0.45));
+    border: 1px solid rgba(20, 184, 166, 0.6);
+    color: #f8fafc;
+    padding: 7px 14px;
+    border-radius: 10px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 8px;
+    margin-bottom: 4px;
+    display: inline-block;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
 
-    .about-btn {
-        padding: 4px 8px;
-        font-size: 0.7rem;
-    }
-
-    .status-badge {
-        padding: 3px 6px;
-    }
-
-    .status-text {
-        font-size: 0.68rem;
-    }
-
-    .chat-box {
-        padding: 14px;
-        gap: 12px;
-    }
-
-    .message {
-        max-width: 90%;
-        font-size: 0.88rem;
-        padding: 12px 14px;
-    }
-
-    .chat-input-area {
-        padding: 10px 12px 10px;
-    }
-
-    .input-wrapper {
-        padding: 2px 4px 2px 12px;
-    }
-
-    input {
-        font-size: 0.88rem;
-    }
-
-    .input-wrapper button {
-        width: 38px;
-        height: 38px;
-    }
-
-    .modal-content {
-        width: 92%;
-        padding: 18px;
-    }
+.inline-place-btn:hover {
+    background: linear-gradient(135deg, #14b8a6, #0284c7);
+    border-color: #14b8a6;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(20, 184, 166, 0.4);
 }

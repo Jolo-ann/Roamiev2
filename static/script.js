@@ -1,3 +1,4 @@
+// script.js
 const chatForm = document.getElementById('chat-form');
 const userInput = document.getElementById('user-input');
 const chatBox = document.getElementById('chat-box');
@@ -28,13 +29,22 @@ chatForm.addEventListener('submit', async (e) => {
     appendMessage(message, 'user-message');
     userInput.value = '';
 
+    await sendMessageToServer(message);
+});
+
+async function sendChoice(val, label) {
+    appendMessage(label || `View details for #${val}`, 'user-message');
+    await sendMessageToServer(val);
+}
+
+async function sendMessageToServer(messageText) {
     const typingIndicator = showTypingIndicator();
 
     try {
         const response = await fetch('/get_response', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: message })
+            body: JSON.stringify({ message: messageText })
         });
         const data = await response.json();
         
@@ -44,7 +54,7 @@ chatForm.addEventListener('submit', async (e) => {
         removeTypingIndicator(typingIndicator);
         appendMessage("Error: Could not process request.", 'bot-message');
     }
-});
+}
 
 function appendMessage(text, className) {
     const messageDiv = document.createElement('div');
