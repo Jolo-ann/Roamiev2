@@ -4,31 +4,44 @@ STATE_AWAITING_NAME = "AWAITING_NAME"
 STATE_IDLE = "IDLE"
 
 # 2. LOCAL ENTITIES GAZETTEER & SCOPE DEFINITIONS
-MUNICIPALITIES = ["laoag", "batac", "san nicolas", "bacarra", "paoay"]
+MUNICIPALITIES = [
+    "laoag", "batac", "san nicolas", "bacarra", "paoay",
+    "badoc", "pinili", "sarrat", "vintar", "pagudpud", "marcos",
+    "adams", "solsona", "nueva era", "bangui", "burgos", "banna"
+]
 
 MUNICIPALITY_ALIASES = {
-    "laoag": ["laoag", "laoag city"],
-    "batac": ["batac", "batac city"],
-    "san nicolas": ["san nicolas"],
-    "bacarra": ["bacarra"],
-    "paoay": ["paoay"],
-}
-
-# Coordinates for Haversine Distance Calculations
-GEOGRAPHIC_COORDINATES = {
-    "laoag": (18.1960, 120.5927),
-    "batac": (18.0558, 120.5650),
-    "san nicolas": (18.1725, 120.5960),
-    "bacarra": (18.2508, 120.6122),
-    "paoay": (18.0617, 120.5233),
+    'laoag': ['laoag', 'laoag city'],
+    'batac': ['batac', 'batac city'],
+    'san nicolas': ['san nicolas'],
+    'bacarra': ['bacarra'],
+    'paoay': ['paoay'],
+    'badoc': ['badoc'],
+    'pinili': ['pinili'],
+    'sarrat': ['sarrat'],
+    'vintar': ['vintar'],
+    'pagudpud': ['pagudpud'],
+    'marcos': ['marcos'],
+    'adams': ['adams'],
+    'solsona': ['solsona'],
+    'nueva era': ['nueva era'],
+    'bangui': ['bangui'],
+    'burgos': ['burgos'],
+    'banna': ['banna'],
 }
 
 UNSUPPORTED_LOCATIONS = [
-    "pagudpud", "bangui", "burgos", "sarrat", "vintar", 
-    "piddig", "pasuquin", "solsona", "badoc", "currimao", "dingras"
+    "piddig", "pasuquin", "currimao", "dingras"
 ]
 
+# config.py
+
 CATEGORY_SYNONYMS = {
+    "tourist spot": [
+        "tourist spot", "tourist spots", "attraction", "attractions", "sightseeing",
+        "sand dunes", "sand dune", "dunes", "beach", "park", "landmark", "monument",
+        "church", "historical site", "destination", "place to visit"
+    ],
     "restaurant": [
         "restaurant", "restaurants", "resto", "bistro", "eatery",
         "dining", "diner", "grill", "steak", "food", "foods",
@@ -41,8 +54,17 @@ CATEGORY_SYNONYMS = {
         "cafe", "cafes", "coffee", "coffee shop", "bakeshop",
         "bakery", "espresso", "latte", "tea", "tea shop", "cozy cafe", "cozy café", "café"
     ],
+    "mall": [
+        "mall", "malls", "shopping mall", "shopping center", "department store", "plaza"
+    ],
     "karaoke": [
         "karaoke", "ktv", "singing", "music lounge", "videoke"
+    ],
+    "dealership": [
+        "dealership", "motorcycle", "motorcycles", "car dealership", "showroom", "auto sales", "toyota", "honda", "yamaha"
+    ],
+    "auto parts": [
+        "motorparts", "motor parts", "auto parts", "spare parts", "car parts", "hardware"
     ],
     "gym": [
         "gym", "fitness", "workout", "fitness center"
@@ -64,7 +86,7 @@ CATEGORY_SYNONYMS = {
     ],
     "supermarket": [
         "supermarket", "supermarkets", "grocery", "grocery store", "groceries",
-        "mart", "convenience store", "hypermarket", "department store"
+        "mart", "convenience store", "hypermarket"
     ]
 }
 

@@ -405,19 +405,7 @@ input::placeholder {
     border: 1px solid var(--border-color);
 }
 
-/* Responsive Adjustments */
-@media (max-width: 520px) {
-    .action-buttons-container {
-        max-width: 100%;
-    }
-    
-    .action-btn {
-        width: 100%;
-        text-align: center;
-    }
-}
-
-/* Add this to style.css */
+/* Inline Place Buttons */
 .inline-detail-btn {
     background: linear-gradient(135deg, rgba(20, 184, 166, 0.3), rgba(2, 132, 199, 0.4));
     border: 1px solid var(--accent-teal);
@@ -462,4 +450,76 @@ input::placeholder {
     border-color: #14b8a6;
     transform: translateY(-1px);
     box-shadow: 0 4px 12px rgba(20, 184, 166, 0.4);
+}
+
+/* Weather Select Dropdown Glassmorphic Styling */
+.weather-widget-container select {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    padding: 5px 10px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    backdrop-filter: blur(8px);
+    outline: none;
+    transition: all 0.2s ease;
+}
+
+.weather-widget-container select:hover {
+    background: rgba(20, 184, 166, 0.2);
+    border-color: var(--accent-teal);
+}
+
+.weather-widget-container select optgroup {
+    background: #1e293b;
+    color: #38bdf8;
+}
+
+.weather-widget-container select option {
+    background: #0f172a;
+    color: #f8fafc;
+}
+
+/* Weather Message Card Styling */
+.weather-card {
+    padding: 4px 2px;
+}
+
+.weather-header {
+    font-size: 0.88rem;
+    color: #38bdf8;
+    margin-bottom: 6px;
+}
+
+.weather-temp {
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: #ffffff;
+    margin-bottom: 4px;
+}
+
+.weather-cond {
+    font-size: 0.95rem;
+    font-weight: 500;
+    margin-left: 6px;
+    color: #cbd5e1;
+}
+
+.weather-details {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+/* Responsive Adjustments */
+@media (max-width: 520px) {
+    .action-buttons-container {
+        max-width: 100%;
+    }
+    
+    .action-btn {
+        width: 100%;
+        text-align: center;
+    }
 }

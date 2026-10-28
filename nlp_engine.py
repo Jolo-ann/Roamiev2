@@ -8,8 +8,7 @@ from nltk.tree import Tree
 
 from config import (
     MUNICIPALITIES, MUNICIPALITY_ALIASES, UNSUPPORTED_LOCATIONS, 
-    CATEGORY_SYNONYMS, LOCAL_DISHES, FEATURE_ALIASES, STOPWORDS, 
-    GEOGRAPHIC_COORDINATES
+    CATEGORY_SYNONYMS, LOCAL_DISHES, FEATURE_ALIASES, STOPWORDS
 )
 
 # 1. TEXT PROCESSING & TOKENIZATION UTILITIES
@@ -46,22 +45,7 @@ def normalized_tokens(text):
         if re.search(r"[a-z0-9]", token)
     ]
 
-# 2. HAVERSINE PROXIMITY CALCULATOR
-def haversine_distance(coord1, coord2):
-    if not coord1 or not coord2:
-        return 999.0
-    lat1, lon1 = coord1
-    lat2, lon2 = coord2
-    R = 6371.0  # Radius of Earth in KM
-
-    dlat = math.radians(lat2 - lat1)
-    dlon = math.radians(lon2 - lon1)
-    a = (math.sin(dlat / 2) ** 2 +
-         math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2)
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    return R * c
-
-# 3. FUZZY MATCHING & N-GRAM RECOGNITION
+# 2. FUZZY MATCHING & N-GRAM RECOGNITION
 def similarity_score(a, b):
     return SequenceMatcher(None, normalize_text(a), normalize_text(b)).ratio()
 
@@ -100,7 +84,19 @@ def fuzzy_phrase_present(text, phrase, threshold=0.80):
 def phrase_present(text, phrase):
     return fuzzy_phrase_present(text, phrase, threshold=0.82)
 
-# 4. ENTITY DETECTORS
+# 3. ENTITY DETECTORS & CONTEXT-AWARE CATEGORY ENGINE
+NEGATION_TRIGGERS = {
+    "no", "not", "dont", "don't", "dont want", "don't want", "doesnt", "doesn't",
+    "except", "excluding", "without", "other than", "hate", "avoid", "instead of"
+}
+
+def is_span_negated(text, span_start):
+    """Checks if a token span is preceded by a negation trigger within a sliding context window."""
+    prefix = text[:span_start].strip()
+    words = re.findall(r"\b\w+[\'\w]*\b", prefix)
+    window = " ".join(words[-4:]).lower() if words else ""
+    return any(re.search(rf"\b{re.escape(trigger)}\b", window) for trigger in NEGATION_TRIGGERS)
+
 def detect_location_entities(text):
     clean = normalize_text(text)
     found_locations = set()
@@ -119,31 +115,50 @@ def detect_unsupported_location(text):
     return None
 
 def detect_category_entity(text):
+    """
+    Scans text for category matches, evaluates preceding context for negation,
+    and returns the target non-negated category based on sentence position and alias length.
+    """
     clean = normalize_text(text)
-    matches = []
+    if not clean:
+        return None
+
+    valid_matches = []
+
     for category, aliases in CATEGORY_SYNONYMS.items():
         for alias in aliases:
-            if phrase_present(clean, alias):
-                matches.append((len(alias), category))
-                break
-    if not matches:
+            alias_norm = normalize_text(alias)
+            for match in re.finditer(rf"\b{re.escape(alias_norm)}\b", clean):
+                start_idx = match.start()
+                if not is_span_negated(clean, start_idx):
+                    valid_matches.append((len(alias_norm), start_idx, category))
+
+    if not valid_matches:
         return None
-    matches.sort(reverse=True)
-    return matches[0][1]
+
+    # Sort primarily by order of occurrence in text (picking late targets like 'I want Y')
+    # and secondarily by specificity (longest alias first)
+    valid_matches.sort(key=lambda item: (item[1], item[0]), reverse=True)
+    return valid_matches[0][2]
 
 def detect_exclusions(text):
     clean = normalize_text(text)
     exclusions = []
+    
+    # Strictly capture category keywords following negation phrases
     exclusion_patterns = [
-        r"(?:don'?t want|no|not|excluding|except)\s+([a-z\s]+)",
+        r"\b(?:dont want|don't want|no|not|excluding|except|without|other than)\b\s+(?:a\s+|an\s+|the\s+)?([a-z\s]+)"
     ]
+    
     for pattern in exclusion_patterns:
         matches = re.findall(pattern, clean)
         for match in matches:
-            for category in CATEGORY_SYNONYMS.keys():
-                if category in match:
-                    exclusions.append(category)
-    return exclusions
+            # Check which category matches the negated text chunk
+            for cat_key, synonyms in CATEGORY_SYNONYMS.items():
+                if any(syn in match for syn in synonyms):
+                    exclusions.append(cat_key)
+
+    return list(set(exclusions))
 
 def detect_feature_entities(text):
     clean = normalize_text(text)
@@ -161,7 +176,7 @@ def detect_dish_entity(text):
             return dish
     return None
 
-# 5. OPERATING HOURS & BUDGET PARSERS
+# 4. OPERATING HOURS & BUDGET PARSERS
 def parse_time_to_minutes(time_str):
     time_str = str(time_str or "").strip().upper()
     match = re.search(r"(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?", time_str)
@@ -184,7 +199,9 @@ def parse_time_to_minutes(time_str):
 
     return hours * 60 + minutes
 
+
 def parse_hours_range(hours_str):
+    """Parses a time range string like '10:00 AM - 10:00 PM' into opening and closing minutes."""
     try:
         clean = str(hours_str or "").strip()
         parts = re.split(r"\s*(?:-|–|to)\s*", clean, flags=re.IGNORECASE)
@@ -200,6 +217,40 @@ def parse_hours_range(hours_str):
         return open_min, close_min
     except Exception:
         return None, None
+
+
+def extract_closing_minutes(hours_data, target_day=None):
+    """
+    Universally extracts closing time in minutes, correctly handling
+    case-insensitive day keys ('Saturday' vs 'saturday') and raw strings.
+    """
+    if not hours_data:
+        return None
+
+    if isinstance(hours_data, dict):
+        day_schedule = None
+        
+        if target_day:
+            for k, v in hours_data.items():
+                if str(k).strip().lower() == target_day.strip().lower():
+                    day_schedule = v
+                    break
+
+        if day_schedule is None:
+            day_schedule = next(iter(hours_data.values()), None)
+
+        if isinstance(day_schedule, dict):
+            closing_str = day_schedule.get("closing") or day_schedule.get("close")
+            return parse_time_to_minutes(closing_str)
+        elif isinstance(day_schedule, str):
+            _, close_min = parse_hours_range(day_schedule)
+            return close_min
+
+    if isinstance(hours_data, str):
+        _, close_min = parse_hours_range(hours_data)
+        return close_min
+
+    return None
 
 def parse_budget(query_text):
     clean = normalize_text(query_text)
@@ -227,13 +278,20 @@ def parse_budget(query_text):
 
 def parse_target_closing_time(query_text):
     clean = normalize_text(query_text)
-    pattern = r"\b(?:until|till|open until|open till|past|at least|up to|open late|late night)\b\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)"
+    
+    pattern = r"\b(?:until|untill|til|till|open until|open untill|open till|past|at least|up to|open late|late night|closing at|closes at)\b\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)"
     match = re.search(pattern, clean, flags=re.IGNORECASE)
-    if not match:
-        return None
-    return parse_time_to_minutes(match.group(1))
+    
+    if match:
+        return parse_time_to_minutes(match.group(1))
+        
+    direct_time = re.search(r"\b(\d{1,2}(?::\d{2})?\s*(?:am|pm))\b", clean, flags=re.IGNORECASE)
+    if direct_time:
+        return parse_time_to_minutes(direct_time.group(1))
+        
+    return None
 
-# 6. NATURAL LANGUAGE PARSER & QUERY TREE GENERATOR
+# 5. NATURAL LANGUAGE PARSER & QUERY TREE GENERATOR
 def build_query_parse_tree(query_text, constraints):
     children = []
     if constraints.get("category"):
@@ -259,6 +317,9 @@ def extract_constraints_nlp(query_text):
     tokens = tokenize_text(clean_text)
     locations = detect_location_entities(clean_text)
 
+    days_of_week = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+    target_day = next((day for day in days_of_week if re.search(rf"\b{day}\b", clean_text)), None)
+
     constraints = {
         "category": detect_category_entity(clean_text),
         "exclusions": detect_exclusions(clean_text),
@@ -268,6 +329,7 @@ def extract_constraints_nlp(query_text):
         "max_budget": parse_budget(clean_text),
         "required_features": detect_feature_entities(clean_text),
         "target_closing_time": parse_target_closing_time(clean_text),
+        "target_day": target_day,
         "raw_query": query_text,
         "tokens": tokens,
         "parse_tree": None,
@@ -276,7 +338,7 @@ def extract_constraints_nlp(query_text):
     constraints["parse_tree"] = build_query_parse_tree(query_text, constraints)
     return constraints
 
-# 7. TF-IDF & LEXICAL SCORING ENGINE
+# 6. TF-IDF & LEXICAL SCORING ENGINE
 def content_tokens(text):
     return [
         singularize_word(token)
@@ -316,7 +378,6 @@ def extract_place_name_query(text):
     """Extracts target place name only for direct venue queries like 'where is Eagles Nest?'."""
     clean = normalize_text(text)
     
-    # Skip if it's a category recommendation query
     if any(k in clean for k in ["cafe", "restaurant", "hotel", "hospital", "bank", "gym", "bar", "coffee"]):
         return None
 

@@ -6,14 +6,14 @@ from flask import Flask, request, jsonify, render_template, session
 from config import (
     STATE_IDLE, MUNICIPALITIES, 
     MUNICIPALITY_ALIASES, CATEGORY_SYNONYMS, FEATURE_ALIASES,
-    THINKING_PHRASES, READY_PHRASES, GREETINGS, GEOGRAPHIC_COORDINATES
+    THINKING_PHRASES, READY_PHRASES, GREETINGS
 )
 from nlp_engine import (
     normalize_text, normalized_tokens, extract_constraints_nlp,
     detect_location_entities, detect_unsupported_location,
     detect_category_entity, detect_feature_entities,
     parse_hours_range, lexical_overlap_score, phrase_present,
-    haversine_distance, extract_place_name_query
+    extract_place_name_query
 )
 
 app = Flask(__name__)
@@ -132,6 +132,16 @@ def find_place_globally(query_text):
 
     return None
 
+# app.py
+
+from nlp_engine import (
+    normalize_text, normalized_tokens, extract_constraints_nlp,
+    detect_location_entities, detect_unsupported_location,
+    detect_category_entity, detect_feature_entities,
+    parse_hours_range, extract_closing_minutes, lexical_overlap_score, phrase_present,
+    extract_place_name_query
+)
+
 def score_and_rank_places_nlp(constraints, session_location=None, ignore_features=False):
     if not ALL_PLACES:
         return []
@@ -142,6 +152,7 @@ def score_and_rank_places_nlp(constraints, session_location=None, ignore_feature
     requested_features = constraints.get("required_features", []) if not ignore_features else []
     requested_dish = constraints.get("dish")
     target_close_min = constraints.get("target_closing_time")
+    target_day = constraints.get("target_day")
     requested_budget = constraints.get("max_budget")
     query_text = constraints.get("raw_query", "")
 
@@ -150,8 +161,11 @@ def score_and_rank_places_nlp(constraints, session_location=None, ignore_feature
     for place in ALL_PLACES:
         p_cat = normalize_text(get_place_attr(place, ["Category", "category"], ""))
         p_name = normalize_text(get_place_attr(place, ["Business name", "business_name"], ""))
-        if any(excluded in p_cat or excluded in p_name for excluded in requested_exclusions):
-            continue
+
+        # EXCLUSION CHECK
+        if requested_exclusions and requested_category:
+            if any(excluded in p_cat for excluded in requested_exclusions) and not category_matches(place, requested_category):
+                continue
 
         if requested_locations and not location_matches(place, requested_locations):
             continue
@@ -161,13 +175,11 @@ def score_and_rank_places_nlp(constraints, session_location=None, ignore_feature
 
         lexical_score = lexical_overlap_score(query_text, place_corpus, PLACE_CORPUS)
 
-        # 1. Dish & Category Matches
+        # 1. Category & Dish Match
         if requested_dish:
             if place_has_dish(place, requested_dish):
                 score += 35.0
                 score += min(15.0, lexical_score * 15.0)
-            else:
-                score += 0.0
         elif requested_category:
             if category_matches(place, requested_category):
                 score += 35.0
@@ -177,39 +189,31 @@ def score_and_rank_places_nlp(constraints, session_location=None, ignore_feature
         else:
             score += min(30.0, lexical_score * 30.0)
 
-        # 2. Location Proximity
+        # 2. Location Match Score
         if requested_locations:
-            target_city = requested_locations[0].lower()
-            if target_city in GEOGRAPHIC_COORDINATES:
-                p_lat = place.get("latitude")
-                p_lon = place.get("longitude")
-                if p_lat and p_lon:
-                    dist_km = haversine_distance(GEOGRAPHIC_COORDINATES[target_city], (float(p_lat), float(p_lon)))
-                    place["calculated_distance_km"] = round(dist_km, 2)
-                    if dist_km <= 2.0:
-                        score += 20.0
-                    elif dist_km <= 5.0:
-                        score += 15.0
-                    elif dist_km <= 10.0:
-                        score += 10.0
-                    else:
-                        score += 5.0
-                else:
-                    score += 20.0
-            else:
-                score += 20.0
+            score += 20.0
 
-        # 3. Features Matching (STRICT CHECK: If requested features are missing and NOT ignored, penalize/exclude)
+        # 3. UNIVERSAL CLOSING TIME SCORING
+        if target_close_min is not None:
+            raw_hours = get_place_attr(place, ["Opening and closing hours", "opening_closing_hours", "Operating Hours", "hours"])
+            place_close_min = extract_closing_minutes(raw_hours, target_day=target_day)
+
+            if place_close_min is not None:
+                hours_diff = abs(target_close_min - place_close_min) / 60.0
+                
+                if hours_diff == 0:
+                    score += 50.0  # Exact 11 PM match gets massive boost
+                else:
+                    score += max(0.0, 50.0 - (hours_diff * 15.0))
+
+        # 4. Features & Budget Matching
         pref_points = 0.0
         if requested_features:
             matched_count = sum(1 for feature in requested_features if place_has_feature(place, feature))
-            if matched_count == 0:
-                if not ignore_features:
-                    # STRICT FILTER: Place MUST have the feature to pass threshold
-                    continue
-            else:
-                feature_ratio = matched_count / len(requested_features)
-                pref_points += feature_ratio * 15.0
+            if matched_count == 0 and not ignore_features:
+                continue
+            elif matched_count > 0:
+                pref_points += (matched_count / len(requested_features)) * 15.0
 
         if requested_budget is not None:
             place_price = price_number_from_place(place)
@@ -227,6 +231,54 @@ def score_and_rank_places_nlp(constraints, session_location=None, ignore_feature
 
     scored_places.sort(key=lambda item: item["score"], reverse=True)
     return scored_places
+
+def format_hours(value):
+    """Render opening-hours strings and structured day/department schedules safely."""
+    if value is None or value == "":
+        return "N/A"
+    if isinstance(value, str):
+        return value.strip() or "N/A"
+    if isinstance(value, dict):
+        day_names = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+        if any(day in value for day in day_names):
+            schedule_groups = {}
+            for day in day_names:
+                if day not in value:
+                    continue
+                schedule = value[day]
+                if schedule is None or (isinstance(schedule, str) and schedule.strip().lower() in {"closed", "none", "n/a"}):
+                    desc = "Closed"
+                elif isinstance(schedule, dict):
+                    opening = schedule.get("opening")
+                    closing = schedule.get("closing")
+                    if opening and closing:
+                        desc = f"{opening}–{closing}"
+                    elif opening or closing:
+                        desc = str(opening or closing)
+                    else:
+                        desc = "Not specified"
+                else:
+                    desc = str(schedule)
+
+                schedule_groups.setdefault(desc, []).append(day.title()[:3])
+
+            if not schedule_groups:
+                return "N/A"
+
+            # Combine identical schedule days into clean readable blocks
+            formatted_parts = []
+            for time_slot, days in schedule_groups.items():
+                if len(days) > 1:
+                    day_str = f"{days[0]}–{days[-1]}"
+                else:
+                    day_str = days[0]
+                formatted_parts.append(f"{day_str}: {time_slot}")
+
+            return "<br>&nbsp;&nbsp;&nbsp;&nbsp;• " + "<br>&nbsp;&nbsp;&nbsp;&nbsp;• ".join(formatted_parts)
+
+        return "; ".join(f"{label}: {format_hours(schedule)}" for label, schedule in value.items())
+    return str(value)
+
 
 def format_place_output(ranked_results, custom_prefix=None, constraints=None, current_location="Laoag"):
     primary_results = [item for item in ranked_results if item["score"] >= 50.0][:5]
@@ -258,11 +310,10 @@ def format_place_output(ranked_results, custom_prefix=None, constraints=None, cu
         name = get_place_attr(place, ["Business name", "business_name", "name"])
         cat = get_place_attr(place, ["Category", "category"])
         city = get_place_attr(place, ["Municipality or city", "municipality_city", "city"])
-        hours = get_place_attr(place, ["Opening and closing hours", "opening_closing_hours", "Operating Hours", "hours"])
+        hours = format_hours(get_place_attr(place, ["Opening and closing hours", "opening_closing_hours", "Operating Hours", "hours"]))
         price = get_place_attr(place, ["Price range", "price_range", "Price Range"])
-        dist_str = f" ({place['calculated_distance_km']} km away)" if "calculated_distance_km" in place else ""
 
-        reply += f"<b>{idx}. {name}</b> ({cat}){dist_str}<br>"
+        reply += f"<b>{idx}. {name}</b> ({cat})<br>"
         reply += f"📍 <b>Location</b>: {city}<br>"
         reply += f"⏰ <b>Hours</b>: {hours}<br>"
         reply += f"💰 <b>Price</b>: {price}<br>"
@@ -300,7 +351,7 @@ def format_single_place_detail(item, constraints=None):
     name = get_place_attr(place, ["Business name", "business_name", "name"])
     cat = get_place_attr(place, ["Category", "category"])
     city = get_place_attr(place, ["Municipality or city", "municipality_city", "city"])
-    hours = get_place_attr(place, ["Opening and closing hours", "opening_closing_hours", "Operating Hours", "hours"])
+    hours = format_hours(get_place_attr(place, ["Opening and closing hours", "opening_closing_hours", "Operating Hours", "hours"]))
     price = get_place_attr(place, ["Price range", "price_range", "Price Range"])
     features_list = get_place_attr(place, ["Features", "features"], default=[])
 
@@ -455,19 +506,31 @@ def get_response():
     if msg_lower in GREETINGS:
         return jsonify({"reply": "Hello! How can I help you explore Ilocos Norte right now?"})
 
+    # 1. Parse NLP Constraints
     constraints = extract_constraints_nlp(msg)
 
-    if constraints.get("dish") and not constraints.get("category"):
-        constraints["category"] = "restaurant"
-
-    if constraints["category"]:
+    # 2. Category Context Resolution
+    if constraints.get("category"):
+        # Explicit new category detected -> Update active state
         u_session["last_category"] = constraints["category"]
-    elif not constraints["category"] and u_session.get("last_category"):
-        constraints["category"] = u_session["last_category"]
+    else:
+        # Check if query contains explicit new search intents (e.g., "where can i buy X", "where is Y")
+        new_intent_query = any(phrase in msg_lower for phrase in [
+            "where", "find", "buy", "looking for", "search", "check", "get", "near"
+        ])
 
-    if constraints["locations"]:
+        if new_intent_query:
+            # Clear old category state to avoid sticking to old topics like 'karaoke'
+            u_session["last_category"] = None
+            constraints["category"] = None
+        elif u_session.get("last_category"):
+            # Carry over active category only for contextual follow-ups
+            constraints["category"] = u_session["last_category"]
+
+    # 3. Location Context Resolution
+    if constraints.get("locations"):
         u_session["location"] = constraints["locations"][0]
-    elif not constraints["locations"] and u_session.get("location"):
+    elif u_session.get("location"):
         constraints["locations"] = [u_session["location"]]
 
     session.modified = True
@@ -488,13 +551,12 @@ def get_response():
 
     u_session["fsm_context"] = "NO_RESULTS"
     session.modified = True
-    
-    req_feat = constraints.get("required_features")
-    if req_feat and constraints.get("category"):
-        query_item = f"{constraints.get('category')} with {req_feat[0]}"
-    else:
-        query_item = constraints.get("dish") or constraints.get("category") or "matching places"
 
+    location_words = "|".join([m.lower() for m in MUNICIPALITIES] + ["city", "ilocos", "norte"])
+    raw_clean = re.sub(rf"\b(where|can|i|find|buy|in|at|the|a|an|near|spot|spots|{location_words})\b", "", msg_lower).strip()
+    raw_clean = re.sub(r"\s+", " ", raw_clean).strip()
+
+    query_item = constraints.get("category") or constraints.get("dish") or raw_clean or "matching places"
     loc_display = current_loc.title()
     
     return jsonify({

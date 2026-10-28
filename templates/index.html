@@ -33,6 +33,35 @@
             </div>
 
             <div class="header-actions">
+                <div class="weather-widget-container">
+                    <select id="weatherLocationSelect" onchange="fetchWeather(this.value)">
+                        <option value="" disabled selected>🌤️ Weather</option>
+                        <optgroup label="Cities">
+                            <option value="laoag">Laoag City</option>
+                            <option value="batac">Batac City</option>
+                        </optgroup>
+                        <optgroup label="Municipalities">
+                            <option value="pagudpud">Pagudpud</option>
+                            <option value="paoay">Paoay</option>
+                            <option value="bacarra">Bacarra</option>
+                            <option value="burgos">Burgos</option>
+                            <option value="bangui">Bangui</option>
+                            <option value="badoc">Badoc</option>
+                            <option value="sarrat">Sarrat</option>
+                            <option value="vintar">Vintar</option>
+                            <option value="san nicolas">San Nicolas</option>
+                            <option value="dingras">Dingras</option>
+                            <option value="solsona">Solsona</option>
+                            <option value="piddig">Piddig</option>
+                            <option value="pasuquin">Pasuquin</option>
+                            <option value="adams">Adams</option>
+                            <option value="banna">Banna</option>
+                            <option value="marcos">Marcos</option>
+                            <option value="nueva era">Nueva Era</option>
+                            <option value="pinili">Pinili</option>
+                        </optgroup>
+                    </select>
+                </div>
                 <button type="button" class="about-btn" id="aboutBtn" title="About Roamie">
                     ℹ️ About
                 </button>
