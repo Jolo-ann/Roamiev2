@@ -43,7 +43,7 @@ ALL_PLACES = get_all_places()
 def build_place_corpus(place):
     name = str(place.get("Business name") or place.get("business_name") or place.get("name") or "")
     cat = str(place.get("Category") or place.get("category") or "")
-    city = str(place.get("Municipality or city") or place.get("municipality_city") or place.get("city") or "")
+    city = str(place.get("Municipality or city") or place.get("municipality_city") or place.get("city") or place.get("municipality") or "")
     desc = str(place.get("Short description") or place.get("short_description") or place.get("Description") or "")
     feats = place.get("Features") or place.get("features") or []
     feats_str = " ".join(str(f) for f in feats) if isinstance(feats, list) else str(feats)
@@ -56,7 +56,7 @@ PLACE_CORPUS = [build_place_corpus(p) for p in ALL_PLACES]
 def get_place_attr(place, keys, default="N/A"):
     for key in keys:
         if key in place and place[key] not in [None, "", "N/A"]:
-            return place[key]
+            return str(place[key]).strip()
     return default
 
 def category_matches(place, requested_category):
@@ -72,11 +72,11 @@ def location_matches(place, requested_locations):
     if isinstance(requested_locations, str):
         requested_locations = [requested_locations]
         
-    city_text = normalize_text(get_place_attr(place, ["Municipality or city", "municipality_city", "city", "municipality"], ""))
+    city_text = normalize_text(get_place_attr(place, ["Municipality or city", "municipality_city", "city", "municipality", "Municipality"], ""))
     
     for req_loc in requested_locations:
         aliases = MUNICIPALITY_ALIASES.get(req_loc, [req_loc])
-        if any(phrase_present(city_text, alias) for alias in aliases):
+        if any(normalize_text(alias) in city_text or phrase_present(city_text, alias) for alias in aliases):
             return True
     return False
 
@@ -134,7 +134,6 @@ def score_and_rank_places_nlp(constraints, session_location=None):
     for place in ALL_PLACES:
         p_cat = normalize_text(get_place_attr(place, ["Category", "category"], ""))
 
-        # Enforce strict category matching (e.g. cafe won't match bakery)
         if requested_category and not category_matches(place, requested_category):
             continue
 
@@ -175,14 +174,14 @@ def score_and_rank_places_nlp(constraints, session_location=None):
             else:
                 continue
         elif requested_category:
-            score += 50.0 + min(20.0, lexical_score * 20.0)
+            score += 60.0 + min(20.0, lexical_score * 20.0)
         else:
-            if lexical_score < 0.20:
+            if lexical_score < 0.15:
                 continue
             score += min(50.0, lexical_score * 50.0)
 
         if requested_locations:
-            score += 30.0
+            score += 20.0
 
         final_score = max(0.0, min(100.0, round(score, 2)))
         scored_places.append({"place": place, "score": final_score})
@@ -254,7 +253,7 @@ def format_place_output(ranked_results, constraints=None, current_location="Laoa
             
         reply += f"<b>What would you like to do?</b><br>"
         reply += f"• Try increasing your budget or relaxing filters.<br>"
-        reply += f"• Change city/municipality (e.g., search in <i>Bacarra</i>, <i>San Nicolas</i>, or <i>Batac</i>)."
+        reply += f"• Try searching in another city or municipality."
         return reply
 
     reply = f"📍 <i>Currently searching in <b>{loc_display}</b></i><br><br>"
@@ -270,7 +269,7 @@ def format_place_output(ranked_results, constraints=None, current_location="Laoa
         score = item["score"]
         name = get_place_attr(place, ["Business name", "business_name", "name"])
         cat = get_place_attr(place, ["Category", "category"])
-        city = get_place_attr(place, ["Municipality or city", "municipality_city", "city"])
+        city = get_place_attr(place, ["Municipality or city", "municipality_city", "city", "municipality", "Municipality"])
         hours = format_hours(get_place_attr(place, ["Opening and closing hours", "opening_closing_hours", "Operating Hours", "hours"]))
         price = get_place_attr(place, ["Price range", "price_range", "Price Range"])
 
@@ -307,7 +306,7 @@ def format_single_place_detail(item):
 
     name = get_place_attr(place, ["Business name", "business_name", "name"])
     cat = get_place_attr(place, ["Category", "category"])
-    city = get_place_attr(place, ["Municipality or city", "municipality_city", "city"])
+    city = get_place_attr(place, ["Municipality or city", "municipality_city", "city", "municipality", "Municipality"])
     hours = format_hours(get_place_attr(place, ["Opening and closing hours", "opening_closing_hours", "Operating Hours", "hours"]))
     price = get_place_attr(place, ["Price range", "price_range", "Price Range"])
     features_list = get_place_attr(place, ["Features", "features"], default=[])
@@ -402,7 +401,7 @@ def get_response():
         global_matched_place = find_place_globally(msg, ALL_PLACES)
         if global_matched_place and any(k in msg_lower for k in ["where", "how to get", "eat at", "go to"]):
             p_name = get_place_attr(global_matched_place, ["Business name", "business_name", "name"])
-            p_city = get_place_attr(global_matched_place, ["Municipality or city", "municipality_city", "city"])
+            p_city = get_place_attr(global_matched_place, ["Municipality or city", "municipality_city", "city", "municipality", "Municipality"])
             
             u_session["location"] = p_city
             u_session["last_places"] = [{"place": global_matched_place, "score": 100.0}]
@@ -413,14 +412,12 @@ def get_response():
 
     constraints = extract_constraints_nlp(msg)
 
-    # Context Carry-over: Keep category/dish/features if only location was updated
     last_constraints = u_session.get("last_constraints", {})
     if not constraints.get("category") and not constraints.get("dish") and last_constraints.get("category"):
         constraints["category"] = last_constraints.get("category")
     if not constraints.get("required_features") and last_constraints.get("required_features"):
         constraints["required_features"] = last_constraints.get("required_features")
 
-    # Smart Location Resolution
     if constraints.get("locations"):
         u_session["location"] = constraints["locations"][0]
     elif u_session.get("location"):
@@ -429,7 +426,6 @@ def get_response():
     current_loc = u_session.get("location", "Laoag")
     ranked_results = score_and_rank_places_nlp(constraints, current_loc)
 
-    # Save state & return response
     u_session["last_constraints"] = constraints
     if ranked_results:
         qualifying = [item for item in ranked_results if item["score"] >= 50.0]

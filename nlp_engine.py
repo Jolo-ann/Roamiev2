@@ -85,8 +85,12 @@ def is_span_negated(text, span_start):
 def detect_location_entities(text):
     clean, found = normalize_text(text), set()
     for municipality, aliases in MUNICIPALITY_ALIASES.items():
-        if any(phrase_present(clean, alias) for alias in aliases):
-            found.add(municipality)
+        for alias in aliases:
+            alias_norm = normalize_text(alias)
+            # Direct word boundary match or phrase check
+            if re.search(rf"\b{re.escape(alias_norm)}\b", clean) or phrase_present(clean, alias):
+                found.add(municipality)
+                break
     return list(found)
 
 def detect_unsupported_location(text):
