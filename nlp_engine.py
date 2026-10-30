@@ -11,13 +11,19 @@ from config import (
     CATEGORY_SYNONYMS, LOCAL_DISHES, FEATURE_ALIASES, STOPWORDS
 )
 
-# 1. TEXT PROCESSING & TOKENIZATION UTILITIES
+NON_SEARCH_PHRASES = {
+    "i dont know", "i don't know", "dont know", "don't know", "idk",
+    "sure", "yes", "no", "maybe", "okay", "ok", "yep", "yeah",
+    "searching for laoag", "searching in laoag", "search laoag"
+}
+
+def is_non_search_input(text):
+    clean = normalize_text(text)
+    return clean in NON_SEARCH_PHRASES or any(clean == p for p in NON_SEARCH_PHRASES)
+
 def normalize_text(text):
-    text = str(text or "").lower()
-    text = text.replace("’", "'").replace('"', '')
-    text = text.replace("–", "-").replace("—", "-")
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
+    text = str(text or "").lower().replace("’", "'").replace('"', '').replace("–", "-").replace("—", "-")
+    return re.sub(r"\s+", " ", text).strip()
 
 def tokenize_text(text):
     return wordpunct_tokenize(normalize_text(text))
@@ -39,13 +45,8 @@ def singularize_word(word):
     return word
 
 def normalized_tokens(text):
-    return [
-        singularize_word(token)
-        for token in tokenize_text(text)
-        if re.search(r"[a-z0-9]", token)
-    ]
+    return [singularize_word(t) for t in tokenize_text(text) if re.search(r"[a-z0-9]", t)]
 
-# 2. FUZZY MATCHING & N-GRAM RECOGNITION
 def similarity_score(a, b):
     return SequenceMatcher(None, normalize_text(a), normalize_text(b)).ratio()
 
@@ -54,58 +55,39 @@ def get_character_ngrams(text, n=3):
     return [clean[i:i+n] for i in range(len(clean) - n + 1)]
 
 def ngram_similarity(str1, str2, n=3):
-    ngrams1 = set(get_character_ngrams(str1, n))
-    ngrams2 = set(get_character_ngrams(str2, n))
-    if not ngrams1 or not ngrams2:
-        return 0.0
-    return len(ngrams1.intersection(ngrams2)) / len(ngrams1.union(ngrams2))
+    ng1, ng2 = set(get_character_ngrams(str1, n)), set(get_character_ngrams(str2, n))
+    return len(ng1.intersection(ng2)) / len(ng1.union(ng2)) if ng1 and ng2 else 0.0
 
 def fuzzy_phrase_present(text, phrase, threshold=0.80):
-    clean_text = normalize_text(text)
-    clean_phrase = normalize_text(phrase)
-    
+    clean_text, clean_phrase = normalize_text(text), normalize_text(phrase)
     if not clean_phrase or not clean_text:
         return False
-        
     if re.search(rf"(?<!\w){re.escape(clean_phrase)}(?!\w)", clean_text):
         return True
-        
-    text_words = clean_text.split()
-    phrase_words = clean_phrase.split()
+    text_words, phrase_words = clean_text.split(), clean_phrase.split()
     phrase_len = len(phrase_words)
-    
     for i in range(len(text_words) - phrase_len + 1):
-        window = " ".join(text_words[i:i + phrase_len])
-        if similarity_score(window, clean_phrase) >= threshold:
+        if similarity_score(" ".join(text_words[i:i + phrase_len]), clean_phrase) >= threshold:
             return True
-            
     return False
 
 def phrase_present(text, phrase):
     return fuzzy_phrase_present(text, phrase, threshold=0.82)
 
-# 3. ENTITY DETECTORS & CONTEXT-AWARE CATEGORY ENGINE
-NEGATION_TRIGGERS = {
-    "no", "not", "dont", "don't", "dont want", "don't want", "doesnt", "doesn't",
-    "except", "excluding", "without", "other than", "hate", "avoid", "instead of"
-}
+NEGATION_TRIGGERS = {"no", "not", "dont", "don't", "dont want", "don't want", "doesnt", "doesn't", "except", "excluding", "without", "other than", "hate", "avoid", "instead of"}
 
 def is_span_negated(text, span_start):
-    """Checks if a token span is preceded by a negation trigger within a sliding context window."""
     prefix = text[:span_start].strip()
     words = re.findall(r"\b\w+[\'\w]*\b", prefix)
     window = " ".join(words[-4:]).lower() if words else ""
-    return any(re.search(rf"\b{re.escape(trigger)}\b", window) for trigger in NEGATION_TRIGGERS)
+    return any(re.search(rf"\b{re.escape(t)}\b", window) for t in NEGATION_TRIGGERS)
 
 def detect_location_entities(text):
-    clean = normalize_text(text)
-    found_locations = set()
+    clean, found = normalize_text(text), set()
     for municipality, aliases in MUNICIPALITY_ALIASES.items():
-        for alias in aliases:
-            if phrase_present(clean, alias):
-                found_locations.add(municipality)
-                break
-    return list(found_locations)
+        if any(phrase_present(clean, alias) for alias in aliases):
+            found.add(municipality)
+    return list(found)
 
 def detect_unsupported_location(text):
     clean = normalize_text(text)
@@ -115,183 +97,117 @@ def detect_unsupported_location(text):
     return None
 
 def detect_category_entity(text):
-    """
-    Scans text for category matches, evaluates preceding context for negation,
-    and returns the target non-negated category based on sentence position and alias length.
-    """
     clean = normalize_text(text)
     if not clean:
         return None
-
-    valid_matches = []
-
+    matches = []
     for category, aliases in CATEGORY_SYNONYMS.items():
         for alias in aliases:
             alias_norm = normalize_text(alias)
-            for match in re.finditer(rf"\b{re.escape(alias_norm)}\b", clean):
-                start_idx = match.start()
-                if not is_span_negated(clean, start_idx):
-                    valid_matches.append((len(alias_norm), start_idx, category))
-
-    if not valid_matches:
+            for m in re.finditer(rf"\b{re.escape(alias_norm)}\b", clean):
+                if not is_span_negated(clean, m.start()):
+                    matches.append((len(alias_norm), m.start(), category))
+    if not matches:
         return None
-
-    # Sort primarily by order of occurrence in text (picking late targets like 'I want Y')
-    # and secondarily by specificity (longest alias first)
-    valid_matches.sort(key=lambda item: (item[1], item[0]), reverse=True)
-    return valid_matches[0][2]
+    matches.sort(key=lambda item: (item[1], item[0]), reverse=True)
+    return matches[0][2]
 
 def detect_exclusions(text):
-    clean = normalize_text(text)
-    exclusions = []
-    
-    # Strictly capture category keywords following negation phrases
-    exclusion_patterns = [
-        r"\b(?:dont want|don't want|no|not|excluding|except|without|other than)\b\s+(?:a\s+|an\s+|the\s+)?([a-z\s]+)"
-    ]
-    
-    for pattern in exclusion_patterns:
-        matches = re.findall(pattern, clean)
-        for match in matches:
-            # Check which category matches the negated text chunk
-            for cat_key, synonyms in CATEGORY_SYNONYMS.items():
-                if any(syn in match for syn in synonyms):
-                    exclusions.append(cat_key)
-
+    clean, exclusions = normalize_text(text), []
+    pattern = r"\b(?:dont want|don't want|no|not|excluding|except|without|other than)\b\s+(?:a\s+|an\s+|the\s+)?([a-z\s]+)"
+    for match in re.findall(pattern, clean):
+        for cat_key, synonyms in CATEGORY_SYNONYMS.items():
+            if any(syn in match for syn in synonyms):
+                exclusions.append(cat_key)
     return list(set(exclusions))
 
 def detect_feature_entities(text):
     clean = normalize_text(text)
-    found = []
-    for feature, aliases in FEATURE_ALIASES.items():
-        if any(phrase_present(clean, alias) for alias in aliases):
-            found.append(feature)
+    found = [f for f, aliases in FEATURE_ALIASES.items() if any(phrase_present(clean, a) for a in aliases)]
+    m_feat = re.search(r"\b(?:with|has|offering|serves?|serving)\s+([a-z0-9\s]+)", clean)
+    if m_feat:
+        ext = m_feat.group(1).strip()
+        if ext and ext not in found and len(ext) > 2:
+            found.append(ext)
     return found
 
 def detect_dish_entity(text):
     clean = normalize_text(text)
-    sorted_dishes = sorted(LOCAL_DISHES, key=len, reverse=True)
-    for dish in sorted_dishes:
+    for dish in sorted(LOCAL_DISHES, key=len, reverse=True):
         if phrase_present(clean, dish):
             return dish
     return None
 
-# 4. OPERATING HOURS & BUDGET PARSERS
 def parse_time_to_minutes(time_str):
-    time_str = str(time_str or "").strip().upper()
-    match = re.search(r"(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?", time_str)
+    match = re.search(r"(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?", str(time_str or "").strip().upper())
     if not match:
         return None
-
-    hours = int(match.group(1))
-    minutes = int(match.group(2)) if match.group(2) else 0
-    period = match.group(3)
-
+    hours, minutes, period = int(match.group(1)), int(match.group(2)) if match.group(2) else 0, match.group(3)
     if hours > 23 or minutes > 59:
         return None
-
     if period == "PM" and hours != 12:
         hours += 12
     elif period == "AM" and hours == 12:
         hours = 0
     elif period is None and hours < 7:
         hours += 12
-
     return hours * 60 + minutes
 
-
 def parse_hours_range(hours_str):
-    """Parses a time range string like '10:00 AM - 10:00 PM' into opening and closing minutes."""
     try:
-        clean = str(hours_str or "").strip()
-        parts = re.split(r"\s*(?:-|–|to)\s*", clean, flags=re.IGNORECASE)
+        parts = re.split(r"\s*(?:-|–|to)\s*", str(hours_str or "").strip(), flags=re.IGNORECASE)
         if len(parts) != 2:
             return None, None
-
-        open_min = parse_time_to_minutes(parts[0])
-        close_min = parse_time_to_minutes(parts[1])
-
-        if close_min is not None and open_min is not None and close_min <= open_min:
-            close_min += 24 * 60
-
-        return open_min, close_min
+        o_min, c_min = parse_time_to_minutes(parts[0]), parse_time_to_minutes(parts[1])
+        if c_min is not None and o_min is not None and c_min <= o_min:
+            c_min += 24 * 60
+        return o_min, c_min
     except Exception:
         return None, None
 
-
-def extract_closing_minutes(hours_data, target_day=None):
-    """
-    Universally extracts closing time in minutes, correctly handling
-    case-insensitive day keys ('Saturday' vs 'saturday') and raw strings.
-    """
+def extract_operating_bounds(hours_data, target_day=None):
     if not hours_data:
-        return None
-
+        return None, None
     if isinstance(hours_data, dict):
-        day_schedule = None
-        
+        day_sch = None
         if target_day:
             for k, v in hours_data.items():
                 if str(k).strip().lower() == target_day.strip().lower():
-                    day_schedule = v
+                    day_sch = v
                     break
+        if day_sch is None:
+            day_sch = next(iter(hours_data.values()), None)
+        if isinstance(day_sch, dict):
+            return parse_time_to_minutes(day_sch.get("opening") or day_sch.get("open")), parse_time_to_minutes(day_sch.get("closing") or day_sch.get("close"))
+        elif isinstance(day_sch, str):
+            return parse_hours_range(day_sch)
+    return parse_hours_range(hours_data) if isinstance(hours_data, str) else (None, None)
 
-        if day_schedule is None:
-            day_schedule = next(iter(hours_data.values()), None)
+def parse_opening_time_constraint(query_text):
+    m = re.search(r"\b(?:opens?\s*at|opening\s*at|open\s*at)\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)", normalize_text(query_text))
+    return parse_time_to_minutes(m.group(1)) if m else None
 
-        if isinstance(day_schedule, dict):
-            closing_str = day_schedule.get("closing") or day_schedule.get("close")
-            return parse_time_to_minutes(closing_str)
-        elif isinstance(day_schedule, str):
-            _, close_min = parse_hours_range(day_schedule)
-            return close_min
-
-    if isinstance(hours_data, str):
-        _, close_min = parse_hours_range(hours_data)
-        return close_min
-
-    return None
+def parse_closing_time_constraint(query_text):
+    m = re.search(r"\b(?:closes?\s*at|closing\s*at|close\s*at|open\s*until|until)\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)", normalize_text(query_text))
+    return parse_time_to_minutes(m.group(1)) if m else None
 
 def parse_budget(query_text):
-    clean = normalize_text(query_text)
+    clean, candidates = normalize_text(query_text), []
     patterns = [
         r"(?:₱|php\s*|p\s*)\s*(\d[\d,]*(?:\.\d+)?)",
         r"(\d[\d,]*(?:\.\d+)?)\s*(?:pesos?|php)",
-        r"\b(?:under|below|less than|up to|within|max(?:imum)?(?: budget)? of|cheap|affordable|budget)\b.*?(?:₱|php|p)?\s*(\d[\d,]*)",
+        r"\b(?:only\s*have|have|budget|under|below|less than|up to|max|cheap)\b.*?(?:₱|php|p)?\s*(\d[\d,]*)",
     ]
-    candidates = []
-    for pattern in patterns:
-        for match in re.finditer(pattern, clean, flags=re.IGNORECASE):
+    for p in patterns:
+        for m in re.finditer(p, clean, flags=re.IGNORECASE):
             try:
-                raw = match.group(1).replace(",", "")
-                value = float(raw)
-                if value > 10:
-                    candidates.append(int(value))
+                val = float(m.group(1).replace(",", ""))
+                if val > 0:
+                    candidates.append(val)
             except (ValueError, IndexError):
                 pass
-
-    budget_words = ["budget", "price", "cost", "cheap", "affordable", "under", "below", "less than", "pesos", "php", "₱"]
-    if not any(word in clean for word in budget_words):
-        return None
-
     return min(candidates) if candidates else None
 
-def parse_target_closing_time(query_text):
-    clean = normalize_text(query_text)
-    
-    pattern = r"\b(?:until|untill|til|till|open until|open untill|open till|past|at least|up to|open late|late night|closing at|closes at)\b\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)"
-    match = re.search(pattern, clean, flags=re.IGNORECASE)
-    
-    if match:
-        return parse_time_to_minutes(match.group(1))
-        
-    direct_time = re.search(r"\b(\d{1,2}(?::\d{2})?\s*(?:am|pm))\b", clean, flags=re.IGNORECASE)
-    if direct_time:
-        return parse_time_to_minutes(direct_time.group(1))
-        
-    return None
-
-# 5. NATURAL LANGUAGE PARSER & QUERY TREE GENERATOR
 def build_query_parse_tree(query_text, constraints):
     children = []
     if constraints.get("category"):
@@ -301,24 +217,20 @@ def build_query_parse_tree(query_text, constraints):
     if constraints.get("exclusions"):
         children.append(Tree("EXCLUSIONS", constraints["exclusions"]))
     if constraints.get("required_features"):
-        children.append(Tree("FEATURES", [Tree("FEATURE", [feature]) for feature in constraints["required_features"]]))
+        children.append(Tree("FEATURES", [Tree("FEATURE", [f]) for f in constraints["required_features"]]))
     if constraints.get("dish"):
         children.append(Tree("DISH", [constraints["dish"]]))
     if constraints.get("max_budget") is not None:
         children.append(Tree("BUDGET", [str(constraints["max_budget"])]))
-    if constraints.get("target_closing_time") is not None:
-        children.append(Tree("CLOSING_TIME", [str(constraints["target_closing_time"])]))
     if not children:
         children.append(Tree("TEXT", list(normalized_tokens(query_text))))
     return Tree("QUERY", children)
 
 def extract_constraints_nlp(query_text):
     clean_text = normalize_text(query_text)
-    tokens = tokenize_text(clean_text)
     locations = detect_location_entities(clean_text)
-
-    days_of_week = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
-    target_day = next((day for day in days_of_week if re.search(rf"\b{day}\b", clean_text)), None)
+    days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+    target_day = next((day for day in days if re.search(rf"\b{day}\b", clean_text)), None)
 
     constraints = {
         "category": detect_category_entity(clean_text),
@@ -328,72 +240,65 @@ def extract_constraints_nlp(query_text):
         "dish": detect_dish_entity(clean_text),
         "max_budget": parse_budget(clean_text),
         "required_features": detect_feature_entities(clean_text),
-        "target_closing_time": parse_target_closing_time(clean_text),
+        "target_opening_time": parse_opening_time_constraint(clean_text),
+        "target_closing_time": parse_closing_time_constraint(clean_text),
         "target_day": target_day,
         "raw_query": query_text,
-        "tokens": tokens,
+        "tokens": tokenize_text(clean_text),
         "parse_tree": None,
     }
-
     constraints["parse_tree"] = build_query_parse_tree(query_text, constraints)
     return constraints
 
-# 6. TF-IDF & LEXICAL SCORING ENGINE
 def content_tokens(text):
-    return [
-        singularize_word(token)
-        for token in normalized_tokens(text)
-        if token not in STOPWORDS and len(token) > 1
-    ]
+    return [singularize_word(t) for t in normalized_tokens(text) if t not in STOPWORDS and len(t) > 1]
 
 def lexical_overlap_score(query_text, place_text, place_corpus_list):
-    q_tokens = content_tokens(query_text)
-    p_tokens = content_tokens(place_text)
-
+    q_tokens, p_tokens = content_tokens(query_text), content_tokens(place_text)
     if not q_tokens or not p_tokens:
         return 0.0
-
     num_docs = len(place_corpus_list) if place_corpus_list else 1
-    doc_words = p_tokens
-    word_counts = Counter(doc_words)
-
+    word_counts = Counter(p_tokens)
     tfidf_score = 0.0
     for token in set(q_tokens):
-        matched_word = token if token in word_counts else None
-        if not matched_word:
-            for w in word_counts.keys():
-                if similarity_score(token, w) >= 0.85:
-                    matched_word = w
-                    break
+        matched_word = token if token in word_counts else next((w for w in word_counts if similarity_score(token, w) >= 0.85), None)
         if matched_word:
-            tf = word_counts[matched_word] / len(doc_words)
+            tf = word_counts[matched_word] / len(p_tokens)
             df = sum(1 for doc in place_corpus_list if token in doc.lower())
             idf = math.log((1 + num_docs) / (1 + df)) + 1.0
             tfidf_score += tf * idf
-
-    ngram_score = ngram_similarity(query_text, place_text)
-    return (tfidf_score * 0.50) + (ngram_score * 0.50)
+    return (tfidf_score * 0.50) + (ngram_similarity(query_text, place_text) * 0.50)
 
 def extract_place_name_query(text):
-    """Extracts target place name only for direct venue queries like 'where is Eagles Nest?'."""
     clean = normalize_text(text)
-    
     if any(k in clean for k in ["cafe", "restaurant", "hotel", "hospital", "bank", "gym", "bar", "coffee"]):
         return None
-
     patterns = [
-        r"\bwhere\s+is\s+(.+)",
-        r"\bwhere\s+can\s+i\s+find\s+(.+)",
-        r"\bwhere\s+to\s+find\s+(.+)",
-        r"\bi\s+want\s+to\s+eat\s+at\s+(.+)",
-        r"\bi\s+want\s+to\s+go\s+to\s+(.+)",
-        r"\bhow\s+to\s+get\s+to\s+(.+)"
+        r"\bwhere\s+is\s+(.+)", r"\bwhere\s+can\s+i\s+find\s+(.+)",
+        r"\bwhere\s+to\s+find\s+(.+)", r"\bi\s+want\s+to\s+eat\s+at\s+(.+)",
+        r"\bi\s+want\s+to\s+go\s+to\s+(.+)", r"\bhow\s+to\s+get\s+to\s+(.+)"
     ]
-    for pattern in patterns:
-        match = re.search(pattern, clean)
-        if match:
-            extracted = match.group(1).strip()
-            cleaned_target = re.sub(r"[^\w\s]", "", extracted).strip()
-            if cleaned_target and cleaned_target not in MUNICIPALITIES and cleaned_target not in ["laoag city", "batac city"]:
-                return cleaned_target
+    for p in patterns:
+        m = re.search(p, clean)
+        if m:
+            cleaned = re.sub(r"[^\w\s]", "", m.group(1).strip()).strip()
+            if cleaned and cleaned not in MUNICIPALITIES and cleaned not in ["laoag city", "batac city"]:
+                return cleaned
     return None
+
+def find_place_globally(text, places_list):
+    target_name = extract_place_name_query(text) or text
+    clean_target = normalize_text(target_name)
+    if not clean_target or clean_target in MUNICIPALITIES:
+        return None
+
+    best_match, highest_score = None, 0.0
+    for place in (places_list or []):
+        p_name = str(place.get("Business name") or place.get("business_name") or place.get("name") or "")
+        clean_p_name = normalize_text(p_name)
+        if clean_target in clean_p_name or clean_p_name in clean_target:
+            return place
+        score = similarity_score(clean_target, clean_p_name)
+        if score > highest_score and score >= 0.75:
+            highest_score, best_match = score, place
+    return best_match
