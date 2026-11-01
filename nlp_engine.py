@@ -14,7 +14,8 @@ from config import (
 NON_SEARCH_PHRASES = {
     "i dont know", "i don't know", "dont know", "don't know", "idk",
     "sure", "yes", "no", "maybe", "okay", "ok", "yep", "yeah",
-    "searching for laoag", "searching in laoag", "search laoag"
+    "searching for laoag", "searching in laoag", "search laoag",
+    "help", "what can you do", "hi", "hello"
 }
 
 def is_non_search_input(text):
@@ -22,14 +23,16 @@ def is_non_search_input(text):
     return clean in NON_SEARCH_PHRASES or any(clean == p for p in NON_SEARCH_PHRASES)
 
 def normalize_text(text):
-    text = str(text or "").lower().replace("’", "'").replace('"', '').replace("–", "-").replace("—", "-")
+    if not text:
+        return ""
+    text = str(text).lower().replace("’", "'").replace('"', '').replace("–", "-").replace("—", "-").replace("/", " ")
     return re.sub(r"\s+", " ", text).strip()
 
 def tokenize_text(text):
     return wordpunct_tokenize(normalize_text(text))
 
 def singularize_word(word):
-    word = word.lower().strip()
+    word = str(word).lower().strip()
     irregular = {
         "restaurants": "restaurant", "cafes": "cafe", "hotels": "hotel",
         "hospitals": "hospital", "banks": "bank", "gyms": "gym",
@@ -52,6 +55,8 @@ def similarity_score(a, b):
 
 def get_character_ngrams(text, n=3):
     clean = f"${normalize_text(text)}$"
+    if len(clean) < n:
+        return [clean]
     return [clean[i:i+n] for i in range(len(clean) - n + 1)]
 
 def ngram_similarity(str1, str2, n=3):
@@ -66,6 +71,8 @@ def fuzzy_phrase_present(text, phrase, threshold=0.80):
         return True
     text_words, phrase_words = clean_text.split(), clean_phrase.split()
     phrase_len = len(phrase_words)
+    if len(text_words) < phrase_len:
+        return False
     for i in range(len(text_words) - phrase_len + 1):
         if similarity_score(" ".join(text_words[i:i + phrase_len]), clean_phrase) >= threshold:
             return True
@@ -87,7 +94,6 @@ def detect_location_entities(text):
     for municipality, aliases in MUNICIPALITY_ALIASES.items():
         for alias in aliases:
             alias_norm = normalize_text(alias)
-            # Direct word boundary match or phrase check
             if re.search(rf"\b{re.escape(alias_norm)}\b", clean) or phrase_present(clean, alias):
                 found.add(municipality)
                 break
@@ -127,13 +133,30 @@ def detect_exclusions(text):
 
 def detect_feature_entities(text):
     clean = normalize_text(text)
-    found = [f for f, aliases in FEATURE_ALIASES.items() if any(phrase_present(clean, a) for a in aliases)]
+    found = []
+    
+    # Strict matching for aliases (short terms like ktv, card, wifi use strict word boundaries)
+    for feat, aliases in FEATURE_ALIASES.items():
+        for alias in aliases:
+            alias_norm = normalize_text(alias)
+            if len(alias_norm) <= 4:
+                if re.search(rf"\b{re.escape(alias_norm)}\b", clean):
+                    found.append(feat)
+                    break
+            else:
+                if phrase_present(clean, alias):
+                    found.append(feat)
+                    break
+
+    # Extract after 'with', 'has', 'offering' excluding conversational noise/stop phrases
     m_feat = re.search(r"\b(?:with|has|offering|serves?|serving)\s+([a-z0-9\s]+)", clean)
     if m_feat:
         ext = m_feat.group(1).strip()
-        if ext and ext not in found and len(ext) > 2:
+        stop_phrases = {"card", "can i", "can", "i", "a", "the", "in", "near", "for", "me"}
+        if ext and ext not in found and len(ext) > 2 and ext not in stop_phrases:
             found.append(ext)
-    return found
+
+    return list(set(found))
 
 def detect_dish_entity(text):
     clean = normalize_text(text)
@@ -143,7 +166,9 @@ def detect_dish_entity(text):
     return None
 
 def parse_time_to_minutes(time_str):
-    match = re.search(r"(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?", str(time_str or "").strip().upper())
+    if not time_str:
+        return None
+    match = re.search(r"(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?", str(time_str).strip().upper())
     if not match:
         return None
     hours, minutes, period = int(match.group(1)), int(match.group(2)) if match.group(2) else 0, match.group(3)
@@ -158,8 +183,10 @@ def parse_time_to_minutes(time_str):
     return hours * 60 + minutes
 
 def parse_hours_range(hours_str):
+    if not hours_str:
+        return None, None
     try:
-        parts = re.split(r"\s*(?:-|–|to)\s*", str(hours_str or "").strip(), flags=re.IGNORECASE)
+        parts = re.split(r"\s*(?:-|–|to)\s*", str(hours_str).strip(), flags=re.IGNORECASE)
         if len(parts) != 2:
             return None, None
         o_min, c_min = parse_time_to_minutes(parts[0]), parse_time_to_minutes(parts[1])
@@ -176,7 +203,7 @@ def extract_operating_bounds(hours_data, target_day=None):
         day_sch = None
         if target_day:
             for k, v in hours_data.items():
-                if str(k).strip().lower() == target_day.strip().lower():
+                if str(k).strip().lower() == str(target_day).strip().lower():
                     day_sch = v
                     break
         if day_sch is None:
@@ -267,9 +294,9 @@ def lexical_overlap_score(query_text, place_text, place_corpus_list):
     for token in set(q_tokens):
         matched_word = token if token in word_counts else next((w for w in word_counts if similarity_score(token, w) >= 0.85), None)
         if matched_word:
-            tf = word_counts[matched_word] / len(p_tokens)
-            df = sum(1 for doc in place_corpus_list if token in doc.lower())
-            idf = math.log((1 + num_docs) / (1 + df)) + 1.0
+            tf = word_counts[matched_word] / float(len(p_tokens))
+            df = sum(1 for doc in place_corpus_list if token in str(doc).lower())
+            idf = math.log((1.0 + num_docs) / (1.0 + df)) + 1.0
             tfidf_score += tf * idf
     return (tfidf_score * 0.50) + (ngram_similarity(query_text, place_text) * 0.50)
 
@@ -300,6 +327,8 @@ def find_place_globally(text, places_list):
     for place in (places_list or []):
         p_name = str(place.get("Business name") or place.get("business_name") or place.get("name") or "")
         clean_p_name = normalize_text(p_name)
+        if not clean_p_name:
+            continue
         if clean_target in clean_p_name or clean_p_name in clean_target:
             return place
         score = similarity_score(clean_target, clean_p_name)

@@ -58,8 +58,8 @@ CATEGORY_SYNONYMS = {
     ],
     "cafe": [
         "cafe", "cafes", "coffee", "coffee shop", "bakeshop",
-        "bakery", "espresso", "latte", "tea", "tea shop", "cozy cafe", "cozy café", "café",
-        "confectionery", "confectionery shop", "dessert shop", "beverage", "beverage spot", "milk tea bar",
+        "espresso", "latte", "tea", "tea shop", "cozy cafe", "cozy café", "café",
+        "confectionery", "confectionery shop", "beverage", "beverage spot", "milk tea bar",
         "smoothie", "smoothies", "frappe", "frappes"
     ],
     "mall": [
