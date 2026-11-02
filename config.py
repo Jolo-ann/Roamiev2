@@ -1,9 +1,8 @@
 # config.py
-# 1. APPLICATION & SYSTEM STATE INITIALIZATION
+
 STATE_AWAITING_NAME = "AWAITING_NAME"
 STATE_IDLE = "IDLE"
 
-# 2. LOCAL ENTITIES GAZETTEER & SCOPE DEFINITIONS
 MUNICIPALITIES = [
     "laoag", "batac", "san nicolas", "bacarra", "paoay",
     "badoc", "pinili", "sarrat", "vintar", "pagudpud", "marcos",
@@ -63,17 +62,18 @@ CATEGORY_SYNONYMS = {
         "smoothie", "smoothies", "frappe", "frappes"
     ],
     "mall": [
-        "mall", "malls", "shopping mall", "shopping center", "department store", "plaza",
-        "public market", "marketplace", "commercial center", "souvenir shop", "pasalubong center", "pasalubong", "retail"
+        "mall", "malls", "shopping mall", "shopping center", "department store / shopping mall",
+        "department store", "commercial center", "plaza"
     ],
     "karaoke": [
         "karaoke", "ktv", "singing", "music lounge", "videoke", "nightlife"
     ],
     "dealership": [
-        "dealership", "motorcycle", "motorcycles", "car dealership", "showroom", "auto sales", "toyota", "honda", "yamaha"
+        "dealership", "motorcycle dealership", "car dealership", "showroom", "auto sales", 
+        "motorcycle", "motorcycles", "buy motorcycle", "toyota", "honda", "yamaha", "kawasaki", "suzuki"
     ],
     "auto parts": [
-        "motorparts", "motor parts", "auto parts", "spare parts", "car parts", "hardware",
+        "motorparts", "motor parts", "auto parts", "spare parts", "car parts",
         "motorcycle repair", "auto repair", "vulcanizing", "vulcanizing shop", "repair shop"
     ],
     "computer shop": [

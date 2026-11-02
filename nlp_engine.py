@@ -99,12 +99,48 @@ def detect_location_entities(text):
                 break
     return list(found)
 
-def detect_unsupported_location(text):
+def detect_unsupported_location(text, all_places=None):
+    """
+    Dynamically extracts location prepositions (e.g. 'in Vigan', 'around Baguio') 
+    and checks if the location is in the supported MUNICIPALITIES list 
+    or matched in ALL_PLACES dataset landmarks.
+    """
     clean = normalize_text(text)
-    for loc in UNSUPPORTED_LOCATIONS:
-        if phrase_present(clean, loc):
-            return loc.title()
-    return None
+    
+    # Preposition pattern to extract requested target location
+    location_patterns = [
+        r"\b(?:in|at|near|around|closest to|nearest to|to|within|from)\s+([a-z0-9\s]+)"
+    ]
+    
+    extracted_target = None
+    for pattern in location_patterns:
+        match = re.search(pattern, clean)
+        if match:
+            candidate = match.group(1).strip()
+            # Strip trailing search terms/categories if present (e.g. "vigan cafe" -> "vigan")
+            candidate = re.sub(r"\b(cafe|cafes|restaurant|restaurants|hotel|hotels|gas station|places|shop)\b.*", "", candidate).strip()
+            if candidate and len(candidate) >= 3:
+                extracted_target = candidate
+                break
+
+    if not extracted_target:
+        return None
+
+    # Check 1: Is it in the supported MUNICIPALITIES list or aliases?
+    for municipality, aliases in MUNICIPALITY_ALIASES.items():
+        for alias in aliases:
+            if normalize_text(alias) == extracted_target or phrase_present(extracted_target, alias):
+                return None  # Location IS supported
+
+    # Check 2: Is it a valid business/landmark in dataset?
+    if all_places:
+        for place in all_places:
+            p_name = normalize_text(str(place.get("Business name") or place.get("business_name") or ""))
+            if extracted_target in p_name:
+                return None  # Landmark IS supported
+
+    # If it was explicitly mentioned as a target location but not found in your coverage:
+    return extracted_target.title()
 
 def detect_category_entity(text):
     clean = normalize_text(text)
@@ -135,7 +171,6 @@ def detect_feature_entities(text):
     clean = normalize_text(text)
     found = []
     
-    # Strict matching for aliases (short terms like ktv, card, wifi use strict word boundaries)
     for feat, aliases in FEATURE_ALIASES.items():
         for alias in aliases:
             alias_norm = normalize_text(alias)
@@ -148,7 +183,6 @@ def detect_feature_entities(text):
                     found.append(feat)
                     break
 
-    # Extract after 'with', 'has', 'offering' excluding conversational noise/stop phrases
     m_feat = re.search(r"\b(?:with|has|offering|serves?|serving)\s+([a-z0-9\s]+)", clean)
     if m_feat:
         ext = m_feat.group(1).strip()
@@ -302,8 +336,6 @@ def lexical_overlap_score(query_text, place_text, place_corpus_list):
 
 def extract_place_name_query(text):
     clean = normalize_text(text)
-    if any(k in clean for k in ["cafe", "restaurant", "hotel", "hospital", "bank", "gym", "bar", "coffee"]):
-        return None
     patterns = [
         r"\bwhere\s+is\s+(.+)", r"\bwhere\s+can\s+i\s+find\s+(.+)",
         r"\bwhere\s+to\s+find\s+(.+)", r"\bi\s+want\s+to\s+eat\s+at\s+(.+)",
@@ -317,21 +349,144 @@ def extract_place_name_query(text):
                 return cleaned
     return None
 
+def haversine_distance(lat1, lon1, lat2, lon2):
+    """
+    Calculate the great-circle distance between two points on Earth in kilometers.
+    """
+    R = 6371.0  # Earth's radius in kilometers
+
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    
+    a = (math.sin(dlat / 2) ** 2 + 
+         math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2)
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+    return R * c
+
+def extract_reference_entity(query_text, all_places):
+    """
+    Dynamically identifies if the reference location in the query 
+    is a specific place/landmark OR an entire municipality/city.
+    """
+    query_lower = query_text.lower()
+    
+    best_place_match = None
+    longest_place_len = 0
+
+    # 1. First Pass: Check against 500+ Business Names & Keywords Synonyms
+    for place in all_places:
+        name = str(place.get("business_name", "")).strip()
+        keywords = place.get("keywords_synonyms", [])
+        
+        # Match business name
+        if name and name.lower() in query_lower:
+            if len(name) > longest_place_len:
+                lat = place.get("latitude")
+                lng = place.get("longitude")
+                if lat is not None and lng is not None:
+                    best_place_match = place
+                    longest_place_len = len(name)
+
+        # Match keyword synonyms
+        for kw in keywords:
+            if kw.lower() in query_lower:
+                if len(kw) > longest_place_len:
+                    lat = place.get("latitude")
+                    lng = place.get("longitude")
+                    if lat is not None and lng is not None:
+                        best_place_match = place
+                        longest_place_len = len(kw)
+
+    if best_place_match:
+        return {"type": "place", "data": best_place_match}
+
+    # 2. Second Pass: Check if user referenced one of your 16 Municipality/City brackets
+    for place in all_places:
+        muni = str(place.get("municipality_city", "")).strip()
+        if muni:
+            # Extract main town name (e.g., "Paoay" from "Paoay, Ilocos Norte")
+            clean_muni = muni.split(",")[0].lower().strip()
+            if clean_muni in query_lower:
+                return {"type": "municipality", "name": clean_muni.title()}
+
+    return None
+
+def filter_places_by_radius(all_places, center_place, requested_category=None, radius_km=2.0):
+    """
+    Filters all dataset entries within radius_km (default 2.0 km) from the center coordinates.
+    """
+    try:
+        c_lat = float(center_place.get("latitude"))
+        c_lng = float(center_place.get("longitude"))
+    except (ValueError, TypeError):
+        return []
+
+    c_name = str(center_place.get("business_name", "")).strip()
+    results = []
+
+    for place in all_places:
+        lat = place.get("latitude")
+        lng = place.get("longitude")
+        p_name = str(place.get("business_name", "")).strip()
+
+        # Ignore invalid coordinates or self-comparison
+        if lat is None or lng is None or p_name.lower() == c_name.lower():
+            continue
+
+        try:
+            lat = float(lat)
+            lng = float(lng)
+        except (ValueError, TypeError):
+            continue
+
+        # Optional category filtering
+        if requested_category:
+            cat = str(place.get("category", "")).lower()
+            feat = " ".join(place.get("features", [])).lower()
+            desc = str(place.get("short_description", "")).lower()
+
+            req_cat_lower = requested_category.lower()
+            if req_cat_lower not in cat and req_cat_lower not in feat and req_cat_lower not in desc:
+                continue
+
+        # Calculate Haversine distance
+        dist = haversine_distance(c_lat, c_lng, lat, lng)
+
+        # Enforce 2 km radius constraint
+        if dist <= radius_km:
+            results.append({
+                "place": place,
+                "distance_km": round(dist, 2)
+            })
+
+    # Sort from nearest to farthest
+    results.sort(key=lambda x: x["distance_km"])
+    return results
+
 def find_place_globally(text, places_list):
     target_name = extract_place_name_query(text) or text
     clean_target = normalize_text(target_name)
     if not clean_target or clean_target in MUNICIPALITIES:
         return None
 
+    # Remove generic keywords to find core brand names (e.g. "toyota dealership" -> "toyota")
+    brand_target = re.sub(r"\b(dealership|mall|restaurant|cafe|hotel|shop|center|store)\b", "", clean_target).strip()
+    query_to_search = brand_target if len(brand_target) >= 3 else clean_target
+
     best_match, highest_score = None, 0.0
     for place in (places_list or []):
         p_name = str(place.get("Business name") or place.get("business_name") or place.get("name") or "")
-        clean_p_name = normalize_text(p_name)
-        if not clean_p_name:
-            continue
-        if clean_target in clean_p_name or clean_p_name in clean_target:
+        p_cat = str(place.get("Category") or place.get("category") or "")
+        p_keywords = str(place.get("Keywords and synonyms") or place.get("keywords") or "")
+        
+        combined_meta = normalize_text(f"{p_name} {p_cat} {p_keywords}")
+        
+        if query_to_search in combined_meta:
             return place
-        score = similarity_score(clean_target, clean_p_name)
-        if score > highest_score and score >= 0.75:
+
+        score = similarity_score(query_to_search, normalize_text(p_name))
+        if score > highest_score and score >= 0.70:
             highest_score, best_match = score, place
+
     return best_match
