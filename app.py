@@ -1,7 +1,9 @@
 # app.py
 import json
-import math
 import re
+import math
+import urllib.request
+import urllib.error
 from flask import Flask, request, jsonify, render_template, session
 
 from config import (
@@ -14,11 +16,45 @@ from nlp_engine import (
     detect_location_entities, detect_unsupported_location,
     detect_category_entity, detect_feature_entities,
     extract_operating_bounds, lexical_overlap_score, phrase_present,
-    extract_place_name_query, is_non_search_input, find_place_globally
+    extract_place_name_query, is_non_search_input, find_place_globally,
+    content_tokens
 )
 
 app = Flask(__name__)
 app.secret_key = "roamie_production_key_fixed"
+
+# --- WEATHER DATA ---
+WEATHER_COORDS = {
+    "laoag": {"lat": 18.1960, "lon": 120.5927, "name": "Laoag City"},
+    "batac": {"lat": 18.0556, "lon": 120.5650, "name": "Batac City"},
+    "pagudpud": {"lat": 18.5583, "lon": 120.7861, "name": "Pagudpud"},
+    "paoay": {"lat": 18.0617, "lon": 120.5211, "name": "Paoay"},
+    "bacarra": {"lat": 18.2511, "lon": 120.6128, "name": "Bacarra"},
+    "burgos": {"lat": 18.5144, "lon": 120.6458, "name": "Burgos"},
+    "bangui": {"lat": 18.5378, "lon": 120.7678, "name": "Bangui"},
+    "badoc": {"lat": 17.9264, "lon": 120.4725, "name": "Badoc"},
+    "sarrat": {"lat": 18.1672, "lon": 120.6542, "name": "Sarrat"},
+    "vintar": {"lat": 18.2300, "lon": 120.6400, "name": "Vintar"},
+    "san nicolas": {"lat": 18.1725, "lon": 120.5958, "name": "San Nicolas"},
+    "dingras": {"lat": 18.1000, "lon": 120.7000, "name": "Dingras"},
+    "solsona": {"lat": 18.0933, "lon": 120.7719, "name": "Solsona"},
+    "piddig": {"lat": 18.1644, "lon": 120.7078, "name": "Piddig"},
+    "pasuquin": {"lat": 18.3333, "lon": 120.6167, "name": "Pasuquin"},
+    "adams": {"lat": 18.4617, "lon": 120.8931, "name": "Adams"},
+    "banna": {"lat": 17.9833, "lon": 120.6500, "name": "Banna"},
+    "marcos": {"lat": 18.0333, "lon": 120.6833, "name": "Marcos"},
+    "nueva era": {"lat": 17.9167, "lon": 120.6667, "name": "Nueva Era"},
+    "pinili": {"lat": 17.9500, "lon": 120.5333, "name": "Pinili"}
+}
+
+WEATHER_CODES_MAP = {
+    0: "☀️ Clear Sky", 1: "🌤️ Mainly Clear", 2: "⛅ Partly Cloudy", 3: "☁️ Overcast",
+    45: "🌫️ Foggy", 48: "🌫️ Depositing Rime Fog", 51: "🌦️ Light Drizzle", 53: "🌦️ Moderate Drizzle",
+    55: "🌧️ Dense Drizzle", 61: "🌧️ Slight Rain", 63: "🌧️ Moderate Rain", 65: "🌧️ Heavy Rain",
+    80: "🌦️ Slight Rain Showers", 81: "🌧️ Moderate Rain Showers", 82: "⛈️ Violent Rain Showers",
+    95: "⛈️ Thunderstorm"
+}
+# -------------------
 
 def load_dataset():
     try:
@@ -41,144 +77,18 @@ def get_all_places():
 
 ALL_PLACES = get_all_places()
 
-def build_place_corpus(place):
-    name = str(place.get("Business name") or place.get("business_name") or place.get("name") or "")
-    cat = str(place.get("Category") or place.get("category") or "")
-    city = str(place.get("Municipality or city") or place.get("municipality_city") or place.get("city") or place.get("municipality") or "")
-    desc = str(place.get("Short description") or place.get("short_description") or place.get("Description") or place.get("description") or "")
-    feats = place.get("Features") or place.get("features") or []
-    feats_str = " ".join(str(f) for f in feats) if isinstance(feats, list) else str(feats)
-    keywords = place.get("Keywords and synonyms") or place.get("keywords_synonyms") or place.get("keywords") or ""
-    keywords_str = " ".join(str(k) for k in keywords) if isinstance(keywords, list) else str(keywords)
-
-    return f"{name}. Category: {cat}. Location: {city}. Details: {desc} Features: {feats_str} Keywords: {keywords_str}"
-
-PLACE_CORPUS = [build_place_corpus(p) for p in ALL_PLACES]
-
 def get_place_attr(place, keys, default="N/A"):
     for key in keys:
         if key in place and place[key] not in [None, "", "N/A"]:
             return place[key]
+            
+    norm_keys = [str(k).lower().replace("_", " ").strip() for k in keys]
+    for place_key, value in place.items():
+        norm_pk = str(place_key).lower().replace("_", " ").strip()
+        if norm_pk in norm_keys and value not in [None, "", "N/A"]:
+            return value
+            
     return default
-
-# =========================================================================
-# UNIVERSAL HAVERSINE & DISTANCE CALCULATION UTILITIES
-# =========================================================================
-
-def haversine_distance(lat1, lon1, lat2, lon2):
-    """
-    Calculate the great-circle distance between two points on Earth in kilometers.
-    """
-    R = 6371.0  # Earth's radius in kilometers
-
-    dlat = math.radians(lat2 - lat1)
-    dlon = math.radians(lon2 - lon1)
-    
-    a = (math.sin(dlat / 2) ** 2 + 
-         math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2)
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-
-    return R * c
-
-def extract_reference_entity(query_text, all_places):
-    """
-    Dynamically identifies if the reference location in the query 
-    is a specific place/landmark OR an entire municipality/city.
-    """
-    query_lower = query_text.lower()
-    best_place_match = None
-    longest_place_len = 0
-
-    # 1. First Pass: Check against 500+ Business Names & Keywords Synonyms
-    for place in all_places:
-        name = str(get_place_attr(place, ["Business name", "business_name", "name"])).strip()
-        keywords = get_place_attr(place, ["Keywords and synonyms", "keywords_synonyms", "keywords"], [])
-        if isinstance(keywords, str):
-            keywords = [keywords]
-
-        # Match business name
-        if name and len(name) >= 3 and name.lower() in query_lower:
-            if len(name) > longest_place_len:
-                lat = get_place_attr(place, ["latitude", "lat"], None)
-                lng = get_place_attr(place, ["longitude", "lng", "lon"], None)
-                if lat is not None and lng is not None:
-                    best_place_match = place
-                    longest_place_len = len(name)
-
-        # Match keyword synonyms
-        for kw in keywords:
-            kw_str = str(kw).strip()
-            if kw_str and len(kw_str) >= 3 and kw_str.lower() in query_lower:
-                if len(kw_str) > longest_place_len:
-                    lat = get_place_attr(place, ["latitude", "lat"], None)
-                    lng = get_place_attr(place, ["longitude", "lng", "lon"], None)
-                    if lat is not None and lng is not None:
-                        best_place_match = place
-                        longest_place_len = len(kw_str)
-
-    if best_place_match:
-        return {"type": "place", "data": best_place_match}
-
-    # 2. Second Pass: Check if user referenced one of your 16 Municipality/City brackets
-    for place in all_places:
-        muni = str(get_place_attr(place, ["Municipality or city", "municipality_city", "city", "municipality"])).strip()
-        if muni and muni != "N/A":
-            clean_muni = muni.split(",")[0].lower().strip()
-            if clean_muni and clean_muni in query_lower:
-                return {"type": "municipality", "name": clean_muni.title()}
-
-    return None
-
-def filter_places_by_radius(all_places, center_place, requested_category=None, radius_km=2.0):
-    """
-    Filters all dataset entries within radius_km (default 2.0 km) from center coordinates.
-    """
-    try:
-        c_lat = float(get_place_attr(center_place, ["latitude", "lat"]))
-        c_lng = float(get_place_attr(center_place, ["longitude", "lng", "lon"]))
-    except (ValueError, TypeError):
-        return []
-
-    c_name = str(get_place_attr(center_place, ["Business name", "business_name", "name"])).strip()
-    results = []
-
-    for place in all_places:
-        lat = get_place_attr(place, ["latitude", "lat"], None)
-        lng = get_place_attr(place, ["longitude", "lng", "lon"], None)
-        p_name = str(get_place_attr(place, ["Business name", "business_name", "name"])).strip()
-
-        # Ignore invalid coordinates or self-comparison
-        if lat is None or lng is None or p_name.lower() == c_name.lower():
-            continue
-
-        try:
-            lat = float(lat)
-            lng = float(lng)
-        except (ValueError, TypeError):
-            continue
-
-        # Optional category filtering
-        if requested_category:
-            if evaluate_category_match(place, requested_category) == 0:
-                continue
-
-        # Calculate Haversine distance
-        dist = haversine_distance(c_lat, c_lng, lat, lng)
-
-        # Enforce 2 km radius constraint
-        if dist <= radius_km:
-            results.append({
-                "place": place,
-                "distance_km": round(dist, 2)
-            })
-
-    # Sort from nearest to farthest
-    results.sort(key=lambda x: x["distance_km"])
-    return results
-
-# =========================================================================
-# STANDARD NLP & EVALUATION FUNCTIONS
-# =========================================================================
 
 def evaluate_category_match(place, requested_category):
     if not requested_category:
@@ -201,13 +111,28 @@ def evaluate_category_match(place, requested_category):
 
     return 0
 
+def build_place_corpus(place):
+    name = str(get_place_attr(place, ["Business name", "business_name", "name"], ""))
+    cat = str(get_place_attr(place, ["Category", "category"], ""))
+    city = str(get_place_attr(place, ["Municipality or city", "Municipality/City", "municipality_city", "city", "municipality"], ""))
+    desc = str(get_place_attr(place, ["Short description", "short_description", "description"], ""))
+    feats = get_place_attr(place, ["Features", "features"], [])
+    feats_str = " ".join(str(f) for f in feats) if isinstance(feats, list) else str(feats)
+    keywords = get_place_attr(place, ["Keywords and synonyms", "keywords_synonyms", "keywords"], "")
+    keywords_str = " ".join(str(k) for k in keywords) if isinstance(keywords, list) else str(keywords)
+
+    return f"{name}. Category: {cat}. Location: {city}. Details: {desc} Features: {feats_str} Keywords: {keywords_str}"
+
+PLACE_CORPUS = [build_place_corpus(p) for p in ALL_PLACES]
+PLACE_CORPUS_LOWER = [c.lower() for c in PLACE_CORPUS]
+
 def location_matches(place, requested_locations):
     if not requested_locations:
         return True
     if isinstance(requested_locations, str):
         requested_locations = [requested_locations]
         
-    city_text = normalize_text(str(get_place_attr(place, ["Municipality or city", "municipality_city", "city", "municipality", "Municipality"], "")))
+    city_text = normalize_text(str(get_place_attr(place, ["Municipality or city", "Municipality/City", "municipality_city", "city", "municipality", "Municipality"], "")))
     
     for req_loc in requested_locations:
         aliases = MUNICIPALITY_ALIASES.get(req_loc.lower(), [req_loc])
@@ -266,6 +191,13 @@ def score_and_rank_places_nlp(constraints, session_location=None):
     requested_budget = constraints.get("max_budget")
     query_text = constraints.get("raw_query", "")
 
+    q_tokens = set(content_tokens(query_text))
+    num_docs = len(PLACE_CORPUS)
+    idf_cache = {}
+    for token in q_tokens:
+        df = sum(1 for doc in PLACE_CORPUS_LOWER if token in doc)
+        idf_cache[token] = math.log((1.0 + num_docs) / (1.0 + df)) + 1.0
+
     has_primary_category_match = False
     if requested_category:
         for p in ALL_PLACES:
@@ -275,7 +207,7 @@ def score_and_rank_places_nlp(constraints, session_location=None):
 
     scored_places = []
     
-    for place in ALL_PLACES:
+    for idx, place in enumerate(ALL_PLACES):
         p_cat = normalize_text(str(get_place_attr(place, ["Category", "category"], "")))
 
         cat_match_level = evaluate_category_match(place, requested_category)
@@ -312,9 +244,9 @@ def score_and_rank_places_nlp(constraints, session_location=None):
             if matched_count == 0:
                 continue
 
-        place_corpus = build_place_corpus(place)
+        place_corpus = PLACE_CORPUS[idx]
         score = 0.0
-        lexical_score = lexical_overlap_score(query_text, place_corpus, PLACE_CORPUS)
+        lexical_score = lexical_overlap_score(query_text, place_corpus, idf_cache=idf_cache)
 
         if requested_dish:
             if place_has_dish(place, requested_dish):
@@ -325,9 +257,12 @@ def score_and_rank_places_nlp(constraints, session_location=None):
             base_cat_score = 65.0 if cat_match_level == 2 else 25.0
             score += base_cat_score + min(15.0, lexical_score * 15.0)
         else:
-            if lexical_score < 0.15:
-                continue
-            score += min(50.0, lexical_score * 50.0)
+            if requested_locations:
+                score += 60.0 + min(30.0, lexical_score * 30.0)
+            else:
+                if lexical_score < 0.15:
+                    continue
+                score += min(50.0, lexical_score * 50.0)
 
         if requested_locations:
             score += 20.0
@@ -337,7 +272,16 @@ def score_and_rank_places_nlp(constraints, session_location=None):
         if final_score >= 50.0:
             scored_places.append({"place": place, "score": final_score})
 
-    scored_places.sort(key=lambda item: item["score"], reverse=True)
+    is_affordable_query = any(w in query_text.lower() for w in ["affordable", "cheap", "budget", "mura", "inexpensive", "low cost", "low price", "student friendly"])
+
+    if is_affordable_query:
+        def get_price_key(item):
+            price = price_number_from_place(item["place"])
+            return price if price is not None else float('inf')
+        scored_places.sort(key=lambda item: (get_price_key(item), -item["score"]))
+    else:
+        scored_places.sort(key=lambda item: item["score"], reverse=True)
+    
     return scored_places
 
 def format_hours(value):
@@ -383,7 +327,7 @@ def format_place_output(ranked_results, constraints=None, current_location="Laoa
     loc_display = (constraints.get("location") or current_location or "Laoag").title()
     
     if not primary_results:
-        req_cat = constraints.get("category") or "places"
+        req_cat = constraints.get("category")
         req_budget = constraints.get("max_budget")
         req_feat = constraints.get("required_features")
         
@@ -395,12 +339,14 @@ def format_place_output(ranked_results, constraints=None, current_location="Laoa
         if req_budget is not None:
             reason_parts.append(f"under <b>₱{int(req_budget)}</b>")
             
-        reason_str = " ".join(reason_parts) if reason_parts else "matching places"
-
-        reply = f"I couldn't find any {reason_str} in <b>{loc_display}</b>.<br><br>"
+        if reason_parts:
+            reason_str = " ".join(reason_parts)
+            reply = f"I couldn't find any {reason_str} in <b>{loc_display}</b>.<br><br>"
+        else:
+            reply = f"I couldn't find any matching places in <b>{loc_display}</b>.<br><br>"
         
         if req_budget is not None:
-            reply += f"💡 <b>Tip</b>: Most cafes/eateries in this area start around ₱30–₱50.<br><br>"
+            reply += f"💡 <b>Tip</b>: The places I know in this area usually start at a higher price. Try increasing your budget!<br><br>"
             
         reply += f"<b>What would you like to do?</b><br>"
         reply += f"• Try increasing your budget or relaxing filters.<br>"
@@ -410,7 +356,7 @@ def format_place_output(ranked_results, constraints=None, current_location="Laoa
     reply = f"📍 <i>Currently searching in <b>{loc_display}</b></i>"
     
     if not has_explicit_location:
-        reply += f"<br>💡 <i>Are you still searching in <b>{loc_display}</b>, or would you like to try a different city/municipality?</i>"
+        reply += f"<br>💡 <i>Are you still searching in <b>{loc_display}</b>, or would you like to try a different city/municipality (e.g., San Nicolas, Batac, Bacarra)?</i>"
 
     reply += "<br><br>Here are the top matching places for your search:<br><br>"
     
@@ -424,15 +370,15 @@ def format_place_output(ranked_results, constraints=None, current_location="Laoa
         score = item["score"]
         name = str(get_place_attr(place, ["Business name", "business_name", "name"]))
         cat = str(get_place_attr(place, ["Category", "category"]))
-        city = str(get_place_attr(place, ["Municipality or city", "municipality_city", "city", "municipality", "Municipality"]))
+        city = str(get_place_attr(place, ["Municipality or city", "Municipality/City", "municipality_city", "city", "municipality", "Municipality"]))
         hours = format_hours(get_place_attr(place, ["Opening and closing hours", "opening_closing_hours", "Operating Hours", "hours"]))
         price = str(get_place_attr(place, ["Price range", "price_range", "Price Range"]))
 
         reply += f"<b>{idx}. {name}</b> ({cat})<br>"
-        reply += f" <b>Location</b>: {city}<br>"
-        reply += f" <b>Hours</b>: {hours}<br>"
-        reply += f" <b>Price</b>: {price}<br>"
-        reply += f" <b>Match Score</b>: {score}/100<br>"
+        reply += f"📍 <b>Location</b>: {city}<br>"
+        reply += f"⏰ <b>Hours</b>: {hours}<br>"
+        reply += f"💰 <b>Price</b>: {price}<br>"
+        reply += f"🔍 <b>Match Score</b>: {score}/100<br>"
 
         if req_dish and place_has_dish(place, req_dish):
             reply += f"• ✅ <b>Dish Match</b>: Serves '<i>{req_dish}</i>'.<br>"
@@ -461,7 +407,7 @@ def format_single_place_detail(item):
 
     name = str(get_place_attr(place, ["Business name", "business_name", "name"]))
     cat = str(get_place_attr(place, ["Category", "category"]))
-    city = str(get_place_attr(place, ["Municipality or city", "municipality_city", "city", "municipality", "Municipality"]))
+    city = str(get_place_attr(place, ["Municipality or city", "Municipality/City", "municipality_city", "city", "municipality", "Municipality"]))
     hours = format_hours(get_place_attr(place, ["Opening and closing hours", "opening_closing_hours", "Operating Hours", "hours"]))
     price = str(get_place_attr(place, ["Price range", "price_range", "Price Range"]))
     features_list = get_place_attr(place, ["Features", "features"], default=[])
@@ -475,10 +421,10 @@ def format_single_place_detail(item):
         maps_url = f"https://www.google.com/maps/search/?api=1&query={search_query}"
 
     reply = f"Here are the full details for <b>{name}</b>:<br><br>"
-    reply += f" <b>Category</b>: {cat}<br>"
-    reply += f" <b>Location</b>: {city}<br>"
-    reply += f" <b>Hours</b>: {hours}<br>"
-    reply += f" <b>Price Range</b>: {price}<br>"
+    reply += f"🏢 <b>Category</b>: {cat}<br>"
+    reply += f"📍 <b>Location</b>: {city}<br>"
+    reply += f"⏰ <b>Hours</b>: {hours}<br>"
+    reply += f"💰 <b>Price Range</b>: {price}<br>"
 
     if features and features != "N/A":
         reply += f"✨ <b>Features</b>: {features}<br>"
@@ -502,10 +448,6 @@ def get_user_session():
             "fsm_context": "IDLE"
         }
     return session["user_data"]
-
-# =========================================================================
-# FLASK ROUTES
-# =========================================================================
 
 @app.route("/")
 def home():
@@ -532,6 +474,40 @@ def get_response():
             "reply": f"Hello! You are currently searching in <b>{current_loc}</b>! How can I help you explore Ilocos Norte right now?"
         })
 
+    # --- SMART BACKEND WEATHER FETCH ---
+    if any(w in msg_lower for w in ["weather", "forecast", "temperature", "climate", "umulan", "init"]):
+        locs = detect_location_entities(msg_lower)
+        target_loc = locs[0] if locs else u_session.get("location", "laoag").lower()
+        
+        coords = WEATHER_COORDS.get(target_loc)
+        if not coords:
+            coords = WEATHER_COORDS["laoag"] # Fallback to Laoag
+            
+        try:
+            url = f"https://api.open-meteo.com/v1/forecast?latitude={coords['lat']}&longitude={coords['lon']}&current_weather=true"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=5) as response:
+                api_data = json.loads(response.read().decode())
+                
+            if api_data and "current_weather" in api_data:
+                temp = round(api_data["current_weather"]["temperature"])
+                wind = api_data["current_weather"]["windspeed"]
+                code = api_data["current_weather"]["weathercode"]
+                condition = WEATHER_CODES_MAP.get(code, "🌤️ Fair")
+                
+                reply = f"📍 <b>Current Weather in {coords['name']}</b><br><br>"
+                reply += f"🌡️ <b>Temperature</b>: {temp}°C<br>"
+                reply += f"☁️ <b>Condition</b>: {condition}<br>"
+                reply += f"💨 <b>Wind Speed</b>: {wind} km/h<br><br>"
+                reply += f"<i>(You can also check other areas using the 🌤️ Weather dropdown at the top right!)</i>"
+                return jsonify({"reply": reply})
+        except Exception as e:
+            print(f"Weather API Error: {e}")
+            return jsonify({
+                "reply": "I couldn't fetch the weather right now. Please check your internet connection or try clicking the <b>🌤️ Weather</b> dropdown button."
+            })
+    # -----------------------------------
+
     if any(phrase in msg_lower for phrase in THINKING_PHRASES):
         return jsonify({"reply": "No rush at all! Take your time. Just let me know whenever you're ready to search."})
 
@@ -542,14 +518,13 @@ def get_response():
         current_loc = u_session.get("location", "Laoag").title()
         return jsonify({"reply": f"Hello! I am currently set to search in <b>{current_loc}</b>. How can I help you explore Ilocos Norte right now?"})
 
-    unsupported_town = detect_unsupported_location(msg_lower, ALL_PLACES)
+    unsupported_town = detect_unsupported_location(msg_lower)
     if unsupported_town:
         supported_str = ", ".join([m.title() for m in MUNICIPALITIES])
         return jsonify({
             "reply": f"Sorry! I don't cover <b>{unsupported_town}</b> yet. I currently cover places in <b>{supported_str}</b>."
         })
 
-    # Option selection handler
     if u_session["last_places"] and msg_lower in ["1", "2", "3", "4", "5", "option 1", "option 2", "option 3", "option 4", "option 5"]:
         idx_map = {"1": 0, "option 1": 0, "2": 1, "option 2": 1, "3": 2, "option 3": 2, "4": 3, "option 4": 3, "5": 4, "option 5": 4}
         selected_idx = idx_map.get(msg_lower)
@@ -557,128 +532,10 @@ def get_response():
             chosen_item = u_session["last_places"][selected_idx]
             return jsonify({"reply": format_single_place_detail(chosen_item)})
 
-    # --- PROXIMITY & DISTANCE QUERY ROUTER ---
-    is_proximity_query = any(k in msg_lower for k in ["nearest", "near", "closest", "around", "close to", "within"])
-    
-    if is_proximity_query:
-        entity = extract_reference_entity(msg, ALL_PLACES)
-
-        if entity:
-            constraints = extract_constraints_nlp(msg)
-            req_cat = constraints.get("category")
-
-            # Mode 1: Center coordinates search around a specific landmark/place (2 km Radius)
-            if entity["type"] == "place":
-                center_place = entity["data"]
-                center_name = str(get_place_attr(center_place, ["Business name", "business_name", "name"]))
-
-                nearest_results = filter_places_by_radius(
-                    ALL_PLACES, 
-                    center_place, 
-                    requested_category=req_cat, 
-                    radius_km=2.0
-                )
-
-                if not nearest_results:
-                    cat_str = f" <b>{req_cat}</b>" if req_cat else " places"
-                    return jsonify({
-                        "reply": f"No{cat_str} found within a <b>2 km</b> radius of <b>{center_name}</b>."
-                    })
-
-                u_session["last_places"] = [r["place"] for r in nearest_results[:5]]
-                session.modified = True
-
-                cat_title = f" ({req_cat.title()})" if req_cat else ""
-                reply = f"📍 <b>Nearest places{cat_title} within 2 km of {center_name}:</b><br><br>"
-
-                for idx, item in enumerate(nearest_results[:5], 1):
-                    place = item["place"]
-                    dist = item["distance_km"]
-                    name = str(get_place_attr(place, ["Business name", "business_name", "name"]))
-                    cat = str(get_place_attr(place, ["Category", "category"]))
-                    muni = str(get_place_attr(place, ["Municipality or city", "municipality_city", "city", "municipality"]))
-                    hours = format_hours(get_place_attr(place, ["Opening and closing hours", "opening_closing_hours", "hours"]))
-
-                    reply += f"<b>{idx}. {name}</b> ({cat})<br>"
-                    reply += f" <b>Distance</b>: {dist} km away<br>"
-                    reply += f" <b>Location</b>: {muni}<br>"
-                    reply += f" <b>Hours</b>: {hours}<br>"
-
-                    clean_name = name.replace("'", "\\'")
-                    reply += f"<button class='inline-place-btn' onclick=\"sendChoice('{idx}', 'View details for #{idx}: {clean_name}')\">View Details</button><br>"
-
-                    if idx < len(nearest_results[:5]):
-                        reply += "<hr style='border: 0; border-top: 1px solid rgba(255,255,255,0.1); margin: 12px 0;'>"
-
-                return jsonify({"reply": reply})
-
-            # Mode 2: Municipality / City bracket search
-            elif entity["type"] == "municipality":
-                muni_name = entity["name"]
-                
-                muni_places = [
-                    p for p in ALL_PLACES 
-                    if muni_name.lower() in str(get_place_attr(p, ["Municipality or city", "municipality_city", "city", "municipality"])).lower()
-                ]
-
-                if req_cat:
-                    muni_places = [
-                        p for p in muni_places 
-                        if req_cat.lower() in str(get_place_attr(p, ["Category", "category"])).lower() 
-                        or req_cat.lower() in " ".join(str(f) for f in get_place_attr(p, ["Features", "features"], [])).lower()
-                    ]
-
-                if not muni_places:
-                    return jsonify({
-                        "reply": f"No listed places found in <b>{muni_name}</b> matching your criteria."
-                    })
-
-                u_session["last_places"] = muni_places[:5]
-                session.modified = True
-
-                reply = f"📍 <b>Places matching your query in {muni_name}:</b><br><br>"
-                for idx, place in enumerate(muni_places[:5], 1):
-                    name = str(get_place_attr(place, ["Business name", "business_name", "name"]))
-                    cat = str(get_place_attr(place, ["Category", "category"]))
-                    hours = format_hours(get_place_attr(place, ["Opening and closing hours", "opening_closing_hours", "hours"]))
-
-                    reply += f"<b>{idx}. {name}</b> ({cat})<br>"
-                    reply += f"⏰ <b>Hours</b>: {hours}<br>"
-                    clean_name = name.replace("'", "\\'")
-                    reply += f"<button class='inline-place-btn' onclick=\"sendChoice('{idx}', 'View details for #{idx}: {clean_name}')\">View Details</button><br>"
-                    
-                    if idx < len(muni_places[:5]):
-                        reply += "<hr style='border: 0; border-top: 1px solid rgba(255,255,255,0.1); margin: 12px 0;'>"
-
-                return jsonify({"reply": reply})
-
-    # Follow-up feature query on previous search results
-    is_followup = any(re.search(rf"\b{p}\b", msg_lower) for p in ["they", "them", "these", "those", "it"]) or msg_lower.startswith(("do ", "does ", "is there ", "are there "))
-    
-    if is_followup and u_session.get("last_places"):
-        asked_features = detect_feature_entities(msg_lower)
-        if asked_features:
-            filtered_previous = []
-            for item in u_session["last_places"]:
-                place = item["place"] if isinstance(item, dict) and "place" in item else item
-                if all(place_has_feature(place, feat) for feat in asked_features):
-                    filtered_previous.append(item)
-            
-            if filtered_previous:
-                reply = f"Yes! Here are the options from your previous search that include <b>{', '.join(asked_features)}</b>:<br><br>"
-                for idx, item in enumerate(filtered_previous, 1):
-                    p_place = item["place"] if isinstance(item, dict) and "place" in item else item
-                    p_name = get_place_attr(p_place, ["Business name", "business_name", "name"])
-                    p_city = get_place_attr(p_place, ["Municipality or city", "municipality_city", "city", "municipality"])
-                    reply += f"<b>{idx}. {p_name}</b> ({p_city})<br>"
-                return jsonify({"reply": reply})
-            else:
-                return jsonify({"reply": f"None of the places from your previous search explicitly list <b>{', '.join(asked_features)}</b>."})
-
     global_matched_place = find_place_globally(msg, ALL_PLACES)
     if global_matched_place and any(k in msg_lower for k in ["where", "how to get", "eat at", "go to", "view", "find", "buy"]):
         p_name = str(get_place_attr(global_matched_place, ["Business name", "business_name", "name"]))
-        p_city = str(get_place_attr(global_matched_place, ["Municipality or city", "municipality_city", "city", "municipality", "Municipality"]))
+        p_city = str(get_place_attr(global_matched_place, ["Municipality or city", "Municipality/City", "municipality_city", "city", "municipality", "Municipality"]))
         
         u_session["location"] = p_city
         u_session["last_places"] = [{"place": global_matched_place, "score": 100.0}]
@@ -688,18 +545,31 @@ def get_response():
         return jsonify({"reply": reply})
 
     constraints = extract_constraints_nlp(msg)
+    
+    has_meaningful_intent = (
+        constraints.get("category") or 
+        constraints.get("dish") or 
+        constraints.get("required_features") or 
+        constraints.get("locations") or
+        constraints.get("max_budget") is not None
+    )
+    
+    if not has_meaningful_intent:
+        if any(w in msg_lower for w in ["hi", "hello", "hey", "sup", "im ", "i'm ", "name is", "my name"]):
+            return jsonify({
+                "reply": "Hello! I am Roamie, your Ilocos Norte place finder. How can I help you today? You can search for a category (e.g., 'cafe'), a municipality (e.g., 'Laoag'), or a budget."
+            })
+            
+        if len(msg_lower.split()) <= 3:
+            return jsonify({
+                "reply": f"I'm sorry, I couldn't understand '{msg}'. 😅 I can help you find places, restaurants, cafes, and more in Ilocos Norte. Try searching for a category (e.g., 'cafe') or a municipality (e.g., 'Laoag')."
+            })
+
     has_explicit_location = bool(constraints.get("locations"))
 
-    # Preserve category AND operating bounds (time/day constraints) across turns
     last_constraints = u_session.get("last_constraints", {})
     if not constraints.get("category") and not constraints.get("dish") and last_constraints.get("category"):
         constraints["category"] = last_constraints.get("category")
-    if constraints.get("target_opening_time") is None and last_constraints.get("target_opening_time") is not None:
-        constraints["target_opening_time"] = last_constraints.get("target_opening_time")
-    if constraints.get("target_closing_time") is None and last_constraints.get("target_closing_time") is not None:
-        constraints["target_closing_time"] = last_constraints.get("target_closing_time")
-    if constraints.get("target_day") is None and last_constraints.get("target_day") is not None:
-        constraints["target_day"] = last_constraints.get("target_day")
 
     if constraints.get("locations"):
         u_session["location"] = constraints["locations"][0]
