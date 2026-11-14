@@ -57,7 +57,7 @@ CATEGORY_SYNONYMS = {
         "samgyupsal", "samgyup", "korean bbq", "korean barbecue", "k-grill", "korean restaurant"
     ],
     "cafe": [
-        "cafe", "cafes", "coffee", "coffee shop", "bakeshop",
+        "cafe", "cafes", "coffee", "coffee shop", "coffee shops", "bakeshop",
         "espresso", "latte", "tea", "tea shop", "cozy cafe", "cozy café", "café",
         "confectionery", "confectionery shop", "beverage", "beverage spot", "milk tea bar",
         "smoothie", "smoothies", "frappe", "frappes"
@@ -73,8 +73,10 @@ CATEGORY_SYNONYMS = {
         "dealership", "motorcycle", "motorcycles", "car dealership", "showroom", "auto sales", "toyota", "honda", "yamaha"
     ],
     "auto parts": [
-        "motorparts", "motor parts", "auto parts", "spare parts", "car parts", "hardware",
-        "motorcycle repair", "auto repair", "vulcanizing", "vulcanizing shop", "repair shop"
+        "motorparts", "motor parts", "auto parts", "spare parts", "motorcycle repair", "auto repair", "vulcanizing", "vulcanizing shop", "repair shop"
+    ],
+    "hardware": [
+        "hardware", "hardware store", "hardware stores", "construction supplies", "lumber", "tools"
     ],
     "computer shop": [
         "computer shop", "internet cafe", "cyber cafe", "gaming hub", "pc shop", "piso net", "computer repair"
@@ -89,8 +91,14 @@ CATEGORY_SYNONYMS = {
     ],
     "hospital": [
         "hospital", "medical center", "clinic", "health center",
-        "infirmary", "healthcare", "medical clinic", "surgical specialist", "doctor", "drugstore", "pharmacy"
+        "infirmary", "healthcare", "medical clinic", "surgical specialist", "doctor"
     ],
+    "vet": [
+            "vet", "veterinary", "animal clinic", "pet clinic"
+        ],
+    "pharmacy": [
+                "pharmacy", "pharmacies", "drugstore"
+            ],
     "bank": [
         "bank", "banks", "atm", "banking"
     ],
@@ -131,8 +139,8 @@ FEATURE_ALIASES = {
 }
 
 FEATURE_KEYWORDS = list(FEATURE_ALIASES.keys())
-THINKING_PHRASES = ["still thinking", "wait", "hold on", "give me a sec", "give me a minute", "thinking", "not sure yet", "wait a bit"]
-READY_PHRASES = ["im ready", "i'm ready", "ready", "ok ready", "okay ready"]
+THINKING_PHRASES = {"still thinking", "wait", "hold on", "give me a sec", "give me a minute", "thinking", "not sure yet", "wait a bit"}
+READY_PHRASES = {"im ready", "i'm ready", "ready", "ok ready", "okay ready"}
 GREETINGS = {"hello", "hi", "hey", "sup", "good morning", "good afternoon", "good evening"}
 CONVERSATIONAL_FILLER = {
     "i dont know", "i don't know", "sure", "searching for laoag", "yes", "no", "maybe", 

@@ -37,7 +37,8 @@ def singularize_word(word):
         "restaurants": "restaurant", "cafes": "cafe", "hotels": "hotel",
         "hospitals": "hospital", "banks": "bank", "gyms": "gym",
         "resorts": "resort", "stores": "store", "places": "place",
-        "groceries": "grocery", "supermarkets": "supermarket"
+        "groceries": "grocery", "supermarkets": "supermarket",
+        "pharmacies": "pharmacy", "veterinaries": "veterinary"
     }
     if word in irregular:
         return irregular[word]
@@ -89,12 +90,24 @@ def is_span_negated(text, span_start):
     window = " ".join(words[-4:]).lower() if words else ""
     return any(re.search(rf"\b{re.escape(t)}\b", window) for t in NEGATION_TRIGGERS)
 
+def detect_unsupported_intent(text):
+    clean = normalize_text(text)
+    unsupported_keywords = [
+        "reserve", "reservation", "book a table", "booking",
+        "waiting line", "waiting time", "how long is the line", "how long is the wait",
+        "generator", "brownout", "power outage", "blackout", "wifi password",
+        "order online", "deliver to my house", "menu", "price of"
+    ]
+    for kw in unsupported_keywords:
+        if re.search(rf"\b{re.escape(kw)}\b", clean) or kw in clean:
+            return kw
+    return None
+
 def detect_location_entities(text):
     clean, found = normalize_text(text), set()
     for municipality, aliases in MUNICIPALITY_ALIASES.items():
         for alias in aliases:
             alias_norm = normalize_text(alias)
-            # FIX: Strict exact word boundary. No more fuzzy matching for places!
             if re.search(rf"\b{re.escape(alias_norm)}\b", clean):
                 found.add(municipality)
                 break
@@ -103,7 +116,6 @@ def detect_location_entities(text):
 def detect_unsupported_location(text):
     clean = normalize_text(text)
     
-    # 1. STRICT BLOCK: Catch major out-of-province places anywhere in the sentence
     KNOWN_UNSUPPORTED = [
         "vigan", "baguio", "manila", "candon", "la union", "pangasinan", 
         "ilocos sur", "abra", "cagayan", "isabela", "tuguegarao", "africa", 
@@ -113,7 +125,6 @@ def detect_unsupported_location(text):
         if re.search(rf"\b{re.escape(loc)}\b", clean):
             return loc.title()
             
-    # 2. Single unknown word check (e.g., "awr")
     words = clean.split()
     if len(words) == 1 and len(clean) >= 3:
         is_supported = any(clean in aliases or clean == muni for muni, aliases in MUNICIPALITY_ALIASES.items())
@@ -128,7 +139,6 @@ def detect_category_entity(text):
     if not clean:
         return None
         
-    # Singularize the text for matching (e.g., "pharmacies" -> "pharmacy")
     clean_sing = " ".join(normalized_tokens(clean))
     
     matches = []
@@ -137,12 +147,21 @@ def detect_category_entity(text):
             alias_norm = normalize_text(alias)
             alias_sing = singularize_word(alias_norm)
             
-            # Check against both original text and singularized text
+            # Check both original and singularized text
             for target_text in [clean, clean_sing]:
                 for m in re.finditer(rf"\b{re.escape(alias_sing)}\b", target_text):
                     if not is_span_negated(clean, m.start()):
                         matches.append((len(alias_sing), m.start(), category))
                         
+    # Fuzzy matching for typos (e.g., "rastaurent")
+    if not matches:
+        for word in clean.split():
+            if len(word) > 3:
+                for category, aliases in CATEGORY_SYNONYMS.items():
+                    for alias in aliases:
+                        if similarity_score(word, alias) >= 0.75:
+                            return category
+
     if not matches:
         return None
     matches.sort(key=lambda item: (item[1], item[0]), reverse=True)
@@ -164,6 +183,10 @@ def detect_feature_entities(text):
     for feat, aliases in FEATURE_ALIASES.items():
         for alias in aliases:
             alias_norm = normalize_text(alias)
+            # Only match "pet" as a feature if it's not part of "pet clinic" or "pet vet"
+            if feat == "pet-friendly" and any(w in clean for w in ["vet", "veterinary", "clinic"]):
+                continue
+                
             if len(alias_norm) <= 4:
                 if re.search(rf"\b{re.escape(alias_norm)}\b", clean):
                     found.append(feat)
@@ -177,7 +200,8 @@ def detect_feature_entities(text):
     if m_feat:
         ext = m_feat.group(1).strip()
         stop_phrases = {"card", "can i", "can", "i", "a", "the", "in", "near", "for", "me"}
-        if ext and ext not in found and len(ext) > 2 and ext not in stop_phrases:
+        ext_words = ext.split()
+        if len(ext_words) <= 2 and ext not in found and len(ext) > 2 and ext not in stop_phrases:
             found.append(ext)
 
     return list(set(found))

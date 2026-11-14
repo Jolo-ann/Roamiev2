@@ -17,7 +17,7 @@ from nlp_engine import (
     detect_category_entity, detect_feature_entities,
     extract_operating_bounds, lexical_overlap_score, phrase_present,
     extract_place_name_query, is_non_search_input, find_place_globally,
-    content_tokens
+    content_tokens, detect_unsupported_intent
 )
 
 app = Flask(__name__)
@@ -474,14 +474,19 @@ def get_response():
             "reply": f"Hello! You are currently searching in <b>{current_loc}</b>! How can I help you explore Ilocos Norte right now?"
         })
 
-    # --- SMART BACKEND WEATHER FETCH ---
+    unsupported_intent = detect_unsupported_intent(msg_lower)
+    if unsupported_intent:
+        return jsonify({
+            "reply": "I apologize, but I am only a local place finder. I cannot assist with reservations, live waiting times, or real-time operational updates like power outages. I can only help you search for and discover places in Ilocos Norte."
+        })
+
     if any(w in msg_lower for w in ["weather", "forecast", "temperature", "climate", "umulan", "init"]):
         locs = detect_location_entities(msg_lower)
         target_loc = locs[0] if locs else u_session.get("location", "laoag").lower()
         
         coords = WEATHER_COORDS.get(target_loc)
         if not coords:
-            coords = WEATHER_COORDS["laoag"] # Fallback to Laoag
+            coords = WEATHER_COORDS["laoag"]
             
         try:
             url = f"https://api.open-meteo.com/v1/forecast?latitude={coords['lat']}&longitude={coords['lon']}&current_weather=true"
@@ -506,12 +511,11 @@ def get_response():
             return jsonify({
                 "reply": "I couldn't fetch the weather right now. Please check your internet connection or try clicking the <b>🌤️ Weather</b> dropdown button."
             })
-    # -----------------------------------
 
-    if any(phrase in msg_lower for phrase in THINKING_PHRASES):
+    if msg_lower in THINKING_PHRASES:
         return jsonify({"reply": "No rush at all! Take your time. Just let me know whenever you're ready to search."})
 
-    if any(phrase in msg_lower for phrase in READY_PHRASES):
+    if msg_lower in READY_PHRASES:
         return jsonify({"reply": "Awesome! What kind of place or category would you like to search for?"})
 
     if msg_lower in GREETINGS:
@@ -567,9 +571,21 @@ def get_response():
 
     has_explicit_location = bool(constraints.get("locations"))
 
+    # --- SMART CONTEXT FALLBACK FIX ---
     last_constraints = u_session.get("last_constraints", {})
-    if not constraints.get("category") and not constraints.get("dish") and last_constraints.get("category"):
-        constraints["category"] = last_constraints.get("category")
+    
+    # Only inherit the previous category if the user's query is JUST a location 
+    # (e.g., "what about batac?"). If they typed a new subject (like "pharmacies"), do NOT inherit.
+    if not constraints.get("category") and not constraints.get("dish") and not constraints.get("required_features") and last_constraints.get("category"):
+        # Check if they typed any random words besides location
+        clean_query = normalize_text(msg)
+        for loc in constraints.get("locations", []):
+            clean_query = clean_query.replace(loc, "")
+        
+        # If the remaining query is very short (like "in", "near", "what about"), inherit the category
+        if len(clean_query.split()) <= 2:
+            constraints["category"] = last_constraints.get("category")
+    # ----------------------------------
 
     if constraints.get("locations"):
         u_session["location"] = constraints["locations"][0]
