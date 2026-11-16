@@ -54,6 +54,37 @@ WEATHER_CODES_MAP = {
     80: "🌦️ Slight Rain Showers", 81: "🌧️ Moderate Rain Showers", 82: "⛈️ Violent Rain Showers",
     95: "⛈️ Thunderstorm"
 }
+
+import math
+
+# Add this below your WEATHER_COORDS dictionary
+MUNICIPALITY_COORDS = {
+    "laoag": {"lat": 18.1960, "lon": 120.5927},
+    "batac": {"lat": 18.0556, "lon": 120.5650},
+    "pagudpud": {"lat": 18.5583, "lon": 120.7861},
+    "paoay": {"lat": 18.0617, "lon": 120.5211},
+    "bacarra": {"lat": 18.2511, "lon": 120.6128},
+    "burgos": {"lat": 18.5144, "lon": 120.6458},
+    "bangui": {"lat": 18.5378, "lon": 120.7678},
+    "badoc": {"lat": 17.9264, "lon": 120.4725},
+    "sarrat": {"lat": 18.1672, "lon": 120.6542},
+    "vintar": {"lat": 18.2300, "lon": 120.6400},
+    "san nicolas": {"lat": 18.1725, "lon": 120.5958},
+    "solsona": {"lat": 18.0933, "lon": 120.7719},
+    "adams": {"lat": 18.4617, "lon": 120.8931},
+    "banna": {"lat": 17.9833, "lon": 120.6500},
+    "marcos": {"lat": 18.0333, "lon": 120.6833},
+    "nueva era": {"lat": 17.9167, "lon": 120.6667},
+    "pinili": {"lat": 17.9500, "lon": 120.5333}
+}
+
+def haversine(lat1, lon1, lat2, lon2):
+    R = 6371.0 # Earth radius in km
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
 # -------------------
 
 def load_dataset():
@@ -176,6 +207,15 @@ def price_number_from_place(place):
 
     return min(values) if values else None
 
+def is_acronym_match(query, text):
+    """Checks if a query is an acronym of the text (e.g., 'lcgh' -> 'Laoag City General Hospital')"""
+    if len(query.split()) == 1 and len(query) >= 2:
+        words = re.findall(r'\b\w', text) # Gets the first letter of each word
+        acronym = "".join(words).lower()
+        if query == acronym:
+            return True
+    return False
+
 def score_and_rank_places_nlp(constraints, session_location=None):
     if not ALL_PLACES:
         return []
@@ -273,14 +313,103 @@ def score_and_rank_places_nlp(constraints, session_location=None):
             scored_places.append({"place": place, "score": final_score})
 
     is_affordable_query = any(w in query_text.lower() for w in ["affordable", "cheap", "budget", "mura", "inexpensive", "low cost", "low price", "student friendly"])
+    is_nearest_query = any(w in query_text.lower() for w in ["nearest", "closest", "close", "near me", "malapit", "near", "nearby"])
 
     if is_affordable_query:
         def get_price_key(item):
             price = price_number_from_place(item["place"])
             return price if price is not None else float('inf')
         scored_places.sort(key=lambda item: (get_price_key(item), -item["score"]))
+        
+    elif is_nearest_query:
+        reference_lat, reference_lon = None, None
+        ref_name = "town center"
+
+        # Try to extract the specific landmark text after "near", "nearby", "around", or "close to"
+        match = re.search(r"\b(?:near|nearby|around|close to)\s+(.+)", query_text, re.IGNORECASE)
+        if match:
+            landmark_query = match.group(1).strip().lower()
+            landmark_query = re.sub(r"[^\w\s]", "", landmark_query)
+            
+            # Remove location names so "near mmsu batac" becomes just "mmsu"
+            for loc in MUNICIPALITIES:
+                landmark_query = re.sub(rf"\b{re.escape(loc)}\b", "", landmark_query).strip()
+            
+            if landmark_query:
+                # Search the database for the specific landmark IN THE REQUESTED LOCATION
+                for p in ALL_PLACES:
+                    p_city = normalize_text(str(get_place_attr(p, ["Municipality or city", "Municipality/City", "municipality_city", "city", "municipality"], "")))
+                    
+                    # Only check places in the town the user requested
+                    if requested_locations and not any(req_loc in p_city for req_loc in requested_locations):
+                        continue
+                        
+                    p_name = str(get_place_attr(p, ["Business name", "business_name", "name"], "")).lower()
+                    
+                    # Get keywords for this place
+                    p_kw_raw = get_place_attr(p, ["Keywords and synonyms", "keywords_synonyms", "keywords"], "")
+                    p_keywords = " ".join(str(k) for k in p_kw_raw).lower() if isinstance(p_kw_raw, list) else str(p_kw_raw).lower()
+
+                    match_found = False
+                    
+                    # 1. Direct substring match in name or keywords
+                    if landmark_query in p_name or landmark_query in p_keywords:
+                        match_found = True
+                    
+                    # 2. Acronym match (e.g., 'lcgh' matches 'Laoag City General Hospital')
+                    elif is_acronym_match(landmark_query, p_name):
+                        match_found = True
+                        
+                    if match_found:
+                        reference_lat = p.get("latitude")
+                        reference_lon = p.get("longitude")
+                        ref_name = str(get_place_attr(p, ["Business name", "business_name", "name"], ""))
+                        break
+        
+        # Fallback to town center if no specific landmark was found
+        if reference_lat is None and requested_locations:
+            target_town = requested_locations[0].lower()
+            town_center = MUNICIPALITY_COORDS.get(target_town)
+            if town_center:
+                reference_lat = town_center["lat"]
+                reference_lon = town_center["lon"]
+                ref_name = f"{target_town.title()} town center"
+
+        if reference_lat is not None and reference_lon is not None:
+            for item in scored_places:
+                place = item["place"]
+                lat = place.get("latitude")
+                lon = place.get("longitude")
+                
+                if lat and lon:
+                    try:
+                        dist = haversine(reference_lat, reference_lon, float(lat), float(lon))
+                        item["distance"] = round(dist, 3)
+                        item["ref_name"] = ref_name
+                        
+                        # Proximity Score: 100 points if 0km, drops to 0 if 10km or further
+                        proximity_score = max(0, 100 - (dist * 10)) 
+                        
+                        # Blend: 40% Text Match + 60% Proximity
+                        blended_score = (item["score"] * 0.4) + (proximity_score * 0.6)
+                        
+                        # Safety net: If it was a valid match (>= 50) originally, don't let it drop below 50
+                        if item["score"] >= 50.0:
+                            item["score"] = round(max(50.1, blended_score), 2)
+                        else:
+                            item["score"] = round(blended_score, 2)
+                            
+                    except Exception:
+                        pass
+            
+            # Now sort by the newly blended score
+            scored_places.sort(key=lambda item: item["score"], reverse=True)
+        else:
+            scored_places.sort(key=lambda item: item["score"], reverse=True)
+            
     else:
         scored_places.sort(key=lambda item: item["score"], reverse=True)
+    # ---------------------------------------
     
     return scored_places
 
@@ -374,7 +503,11 @@ def format_place_output(ranked_results, constraints=None, current_location="Laoa
         hours = format_hours(get_place_attr(place, ["Opening and closing hours", "opening_closing_hours", "Operating Hours", "hours"]))
         price = str(get_place_attr(place, ["Price range", "price_range", "Price Range"]))
 
+        distance = item.get("distance")
+        
         reply += f"<b>{idx}. {name}</b> ({cat})<br>"
+        if distance is not None:
+            reply += f"📏 <b>Distance</b>: {distance} km from town center<br>"
         reply += f"📍 <b>Location</b>: {city}<br>"
         reply += f"⏰ <b>Hours</b>: {hours}<br>"
         reply += f"💰 <b>Price</b>: {price}<br>"
@@ -559,15 +692,16 @@ def get_response():
     )
     
     if not has_meaningful_intent:
+        # 1. Check for greetings first
         if any(w in msg_lower for w in ["hi", "hello", "hey", "sup", "im ", "i'm ", "name is", "my name"]):
             return jsonify({
                 "reply": "Hello! I am Roamie, your Ilocos Norte place finder. How can I help you today? You can search for a category (e.g., 'cafe'), a municipality (e.g., 'Laoag'), or a budget."
             })
             
-        if len(msg_lower.split()) <= 3:
-            return jsonify({
-                "reply": f"I'm sorry, I couldn't understand '{msg}'. 😅 I can help you find places, restaurants, cafes, and more in Ilocos Norte. Try searching for a category (e.g., 'cafe') or a municipality (e.g., 'Laoag')."
-            })
+        # 2. Reject everything else that doesn't have a valid intent, regardless of length
+        return jsonify({
+            "reply": f"I couldn't find a specific place to search for in your message. 😅 I can help you find places, restaurants, cafes, and more in Ilocos Norte. Try including a category (e.g., 'cafe') or a location (e.g., 'Laoag')."
+        })
 
     has_explicit_location = bool(constraints.get("locations"))
 

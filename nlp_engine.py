@@ -147,19 +147,18 @@ def detect_category_entity(text):
             alias_norm = normalize_text(alias)
             alias_sing = singularize_word(alias_norm)
             
-            # Check both original and singularized text
             for target_text in [clean, clean_sing]:
                 for m in re.finditer(rf"\b{re.escape(alias_sing)}\b", target_text):
                     if not is_span_negated(clean, m.start()):
                         matches.append((len(alias_sing), m.start(), category))
                         
-    # Fuzzy matching for typos (e.g., "rastaurent")
+    # FUZZY MATCHING FIX: Only check words 5 letters or longer, and require a 0.85 match
     if not matches:
         for word in clean.split():
-            if len(word) > 3:
+            if len(word) >= 5: 
                 for category, aliases in CATEGORY_SYNONYMS.items():
                     for alias in aliases:
-                        if similarity_score(word, alias) >= 0.75:
+                        if len(alias) >= 5 and similarity_score(word, alias) >= 0.85:
                             return category
 
     if not matches:
