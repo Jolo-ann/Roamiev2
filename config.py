@@ -1,9 +1,7 @@
 # config.py
-# 1. APPLICATION & SYSTEM STATE INITIALIZATION
 STATE_AWAITING_NAME = "AWAITING_NAME"
 STATE_IDLE = "IDLE"
 
-# 2. LOCAL ENTITIES GAZETTEER & SCOPE DEFINITIONS
 MUNICIPALITIES = [
     "laoag", "batac", "san nicolas", "bacarra", "paoay",
     "badoc", "pinili", "sarrat", "vintar", "pagudpud", "marcos",
@@ -30,14 +28,10 @@ MUNICIPALITY_ALIASES = {
     'banna': ['banna'],
 }
 
-UNSUPPORTED_LOCATIONS = [
-    "piddig", "pasuquin", "currimao", "dingras"
-]
+UNSUPPORTED_LOCATIONS = ["piddig", "pasuquin", "currimao", "dingras"]
 
 CATEGORY_SYNONYMS = {
-    "barbershop": [
-        "barbershop", "barber shop", "barber", "salon", "haircut", "hair salon"
-    ],
+    "barbershop": ["barbershop", "barber shop", "barber", "salon", "haircut", "hair salon"],
     "tourist spot": [
         "tourist spot", "tourist spots", "attraction", "attractions", "sightseeing",
         "sand dunes", "sand dune", "dunes", "beach", "park", "landmark", "monument",
@@ -46,79 +40,57 @@ CATEGORY_SYNONYMS = {
     ],
     "restaurant": [
         "restaurant", "restaurants", "resto", "bistro", "eatery",
-        "dining", "diner", "grill", "steak",
-        "wings", "pasta", "sushi", "ramen", "seafood",
+        "dining", "diner", "grill", "steak", "wings", "pasta", "sushi", "ramen", "seafood",
         "bbq", "barbecue", "fastfood", "fast food", "empanada", "empanadaan",
         "bagnet", "poqui-poqui", "poquipoqui", "poqui poqui", "ilocano food", "local dishes",
         "carinderia", "snack bar", "food stall", "food stalls",
-        "catering", "catering services", "food court", "foodcourt", "street food", "local delicacy stall"
+        "catering", "catering services", "food court", "foodcourt", "street food", "local delicacy stall",
+        "eat", "meal", "meals", "food", "hungry", "starving", "want to eat", "need to eat"
     ],
-    "samgyupsal": [
-        "samgyupsal", "samgyup", "korean bbq", "korean barbecue", "k-grill", "korean restaurant"
+    "bakery": [
+        "bakery", "bakeshop", "cake", "cakes", "pastry", "pastries", "bread", "breads", "dessert", "desserts"
     ],
+    "samgyupsal": ["samgyupsal", "samgyup", "korean bbq", "korean barbecue", "k-grill", "korean restaurant"],
     "cafe": [
         "cafe", "cafes", "coffee", "coffee shop", "coffee shops", "bakeshop",
         "espresso", "latte", "tea", "tea shop", "cozy cafe", "cozy café", "café",
         "confectionery", "confectionery shop", "beverage", "beverage spot", "milk tea bar",
-        "smoothie", "smoothies", "frappe", "frappes"
+        "smoothie", "smoothies", "frappe", "frappes", "drink", "drinks",
+        "thirsty", "refreshment", "refreshments", "want to drink", "want a drink"
     ],
+    "bar": ["bar", "bars", "pub", "pubs", "nightclub", "restobar", "beer", "alcohol", "cocktail", "cocktails", "nightlife"],
+    "airport": ["airport", "airplanes", "airplane", "flights", "flight", "fly", "flying", "plane", "planes", "travel by air", "travel via airplane"],
     "mall": [
         "mall", "malls", "shopping mall", "shopping center", "department store", "plaza",
-        "public market", "marketplace", "commercial center", "souvenir shop", "pasalubong center", "pasalubong", "retail"
+        "public market", "marketplace", "commercial center", "souvenir shop", "pasalubong center", "pasalubong", "retail",
+        "buy", "shop", "shopping"
     ],
-    "karaoke": [
-        "karaoke", "ktv", "singing", "music lounge", "videoke", "nightlife"
-    ],
-    "dealership": [
-        "dealership", "motorcycle", "motorcycles", "car dealership", "showroom", "auto sales", "toyota", "honda", "yamaha"
-    ],
-    "auto parts": [
-        "motorparts", "motor parts", "auto parts", "spare parts", "motorcycle repair", "auto repair", "vulcanizing", "vulcanizing shop", "repair shop"
-    ],
-    "hardware": [
-        "hardware", "hardware store", "hardware stores", "construction supplies", "lumber", "tools"
-    ],
-    "computer shop": [
-        "computer shop", "internet cafe", "cyber cafe", "gaming hub", "pc shop", "piso net", "computer repair"
-    ],
-    "gym": [
-        "gym", "fitness", "workout", "fitness center"
-    ],
-    "hotel": [
-        "hotel", "hotels", "resort", "resorts", "inn",
-        "lodging", "stay", "accommodation", "place to stay",
-        "transient", "homestay"
-    ],
+    "karaoke": ["karaoke", "ktv", "singing", "music lounge", "videoke"],
+    "dealership": ["dealership", "motorcycle", "motorcycles", "car dealership", "showroom", "auto sales", "toyota", "honda", "yamaha"],
+    "auto parts": ["motorparts", "motor parts", "auto parts", "spare parts", "motorcycle repair", "auto repair", "vulcanizing", "vulcanizing shop", "repair shop"],
+    "hardware": ["hardware", "hardware store", "hardware stores", "construction supplies", "lumber", "tools"],
+    "computer shop": ["computer shop", "internet cafe", "cyber cafe", "gaming hub", "pc shop", "piso net", "computer repair"],
+    "gym": ["gym", "fitness", "workout", "fitness center"],
+    "hotel": ["hotel", "hotels", "resort", "resorts", "inn", "lodging", "stay", "accommodation", "place to stay", "transient", "homestay"],
     "hospital": [
-        "hospital", "medical center", "clinic", "health center",
-        "infirmary", "healthcare", "medical clinic", "surgical specialist", "doctor"
+        "hospital", "medical center", "clinic", "health center", "infirmary", "healthcare", "medical clinic", "surgical specialist", "doctor"
     ],
-    "vet": [
-            "vet", "veterinary", "animal clinic", "pet clinic"
-        ],
-    "pharmacy": [
-                "pharmacy", "pharmacies", "drugstore"
-            ],
+    "vet": ["vet", "veterinary", "animal clinic", "pet clinic"],
+    "pharmacy": ["pharmacy", "pharmacies", "drugstore"],
     "bank": [
-        "bank", "banks", "atm", "banking"
+        "bank", "banks", "atm", "banking", "pawnshop", "pawn shop", "pawnshops",
+        "transfer", "transfer money", "transfer my money", "send money", "money transfer", 
+        "remittance", "western union", "cebuana", "money services", "remittance center"
     ],
-    "gas station": [
-        "gas station", "gasoline station", "gasoline",
-        "gas", "fuel", "petrol", "petrol station"
-    ],
+    "gas station": ["gas station", "gasoline station", "gasoline", "gas", "fuel", "petrol", "petrol station"],
     "supermarket": [
         "supermarket", "supermarkets", "grocery", "grocery store", "groceries",
-        "mart", "convenience store", "hypermarket", "variety store", "general merchandise"
+        "mart", "convenience store", "hypermarket", "variety store", "general merchandise",
+        "buy", "shop", "shopping"
     ],
-    "laundry": [
-        "laundry", "laundry service", "laundry shop", "dry cleaning", "wash and fold"
-    ],
-    "school": [
-        "school", "elementary school", "high school", "integrated school", "educational network"
-    ],
-    "government": [
-        "government", "municipal hall", "town hall", "government office", "civic center"
-    ]
+    "laundry": ["laundry", "laundry service", "laundry shop", "dry cleaning", "wash and fold"],
+    "school": ["school", "elementary school", "high school", "integrated school", "educational network"],
+    "government": ["government", "municipal hall", "town hall", "government office", "civic center"]
 }
 
 LOCAL_DISHES = [
@@ -142,6 +114,7 @@ FEATURE_KEYWORDS = list(FEATURE_ALIASES.keys())
 THINKING_PHRASES = {"still thinking", "wait", "hold on", "give me a sec", "give me a minute", "thinking", "not sure yet", "wait a bit"}
 READY_PHRASES = {"im ready", "i'm ready", "ready", "ok ready", "okay ready"}
 GREETINGS = {"hello", "hi", "hey", "sup", "good morning", "good afternoon", "good evening"}
+THANKS_PHRASES = {"thanks", "thank you", "ty", "thx", "thank you so much", "salamat"}
 CONVERSATIONAL_FILLER = {
     "i dont know", "i don't know", "sure", "searching for laoag", "yes", "no", "maybe", 
     "ok", "okay", "alright", "idk", "not sure", "help", "what can you do"
