@@ -8,13 +8,7 @@ from flask import Flask, request, jsonify, render_template, session
 from config import (
     STATE_IDLE, MUNICIPALITIES, 
     MUNICIPALITY_ALIASES, CATEGORY_SYNONYMS, FEATURE_ALIASES,
-    THINKING_PHRASES, READY_PHRASES, GREETINGS, THANKS_PHRASES # <-- ADD THANKS_PHRASES
-)
-
-from config import (
-    STATE_IDLE, MUNICIPALITIES, 
-    MUNICIPALITY_ALIASES, CATEGORY_SYNONYMS, FEATURE_ALIASES,
-    THINKING_PHRASES, READY_PHRASES, GREETINGS
+    THINKING_PHRASES, READY_PHRASES, GREETINGS, THANKS_PHRASES
 )
 from nlp_engine import (
     normalize_text, normalized_tokens, extract_constraints_nlp,
@@ -27,6 +21,17 @@ from nlp_engine import (
 
 app = Flask(__name__)
 app.secret_key = "roamie_production_key_fixed"
+
+# --- HELPER FOR WORD BOUNDARY MATCHING ---
+def contains_phrase(text, phrases):
+    for phrase in phrases:
+        if len(phrase) <= 3:
+            if re.search(r'\b' + re.escape(phrase) + r'\b', text):
+                return True
+        else:
+            if phrase in text:
+                return True
+    return False
 
 # --- WEATHER DATA ---
 WEATHER_COORDS = {
@@ -129,17 +134,12 @@ def evaluate_category_match(place, requested_category):
     primary_cat = normalize_text(str(get_place_attr(place, ["Category", "category"], "")))
     aliases = CATEGORY_SYNONYMS.get(requested_category, [requested_category])
 
-    if any(phrase_present(primary_cat, alias) for alias in aliases):
-        return 2
-
-    desc = str(get_place_attr(place, ["Short description", "short_description", "Description", "description"], ""))
-    keywords = get_place_attr(place, ["Keywords and synonyms", "keywords_synonyms", "keywords"], "")
-    keywords_str = " ".join(str(k) for k in keywords) if isinstance(keywords, list) else str(keywords)
-    
-    secondary_corpus = normalize_text(f"{desc} {keywords_str}")
-
-    if any(phrase_present(secondary_corpus, alias) for alias in aliases):
-        return 1
+    # STRICT FIX: ONLY check the primary Category, NOT the Business Name.
+    # This prevents "Petron Gasoline Station - Airport Road" from matching "airport".
+    for alias in aliases:
+        alias_norm = normalize_text(alias)
+        if re.search(rf"\b{re.escape(alias_norm)}\b", primary_cat):
+            return 2
 
     return 0
 
@@ -208,14 +208,6 @@ def price_number_from_place(place):
 
     return min(values) if values else None
 
-def is_acronym_match(query, text):
-    if len(query.split()) == 1 and len(query) >= 2:
-        words = re.findall(r'\b\w', text)
-        acronym = "".join(words).lower()
-        if query == acronym:
-            return True
-    return False
-
 def score_and_rank_places_nlp(constraints, session_location=None):
     if not ALL_PLACES:
         return []
@@ -223,6 +215,13 @@ def score_and_rank_places_nlp(constraints, session_location=None):
     requested_category = constraints.get("category")
     requested_exclusions = constraints.get("exclusions", [])
     requested_locations = constraints.get("locations") or ([session_location] if session_location else [])
+    
+    reference_place = constraints.get("reference_place")
+    if reference_place:
+        ref_city = str(get_place_attr(reference_place, ["Municipality or city", "Municipality/City", "municipality_city", "city", "municipality"], "")).lower()
+        if ref_city:
+            requested_locations = [ref_city]
+
     requested_features = constraints.get("required_features", [])
     requested_excluded_features = constraints.get("excluded_features", [])
     requested_excluded_locations = constraints.get("excluded_locations", [])
@@ -231,6 +230,14 @@ def score_and_rank_places_nlp(constraints, session_location=None):
     target_close_min = constraints.get("target_closing_time")
     target_day = constraints.get("target_day")
     requested_budget = constraints.get("max_budget")
+    
+    if isinstance(requested_budget, str):
+        match = re.search(r'\d+(?:\.\d+)?', requested_budget)
+        if match:
+            requested_budget = float(match.group(0))
+        else:
+            requested_budget = None
+
     query_text = constraints.get("raw_query", "")
 
     q_tokens = set(content_tokens(query_text))
@@ -240,23 +247,16 @@ def score_and_rank_places_nlp(constraints, session_location=None):
         df = sum(1 for doc in PLACE_CORPUS_LOWER if token in doc)
         idf_cache[token] = math.log((1.0 + num_docs) / (1.0 + df)) + 1.0
 
-    has_primary_category_match = False
-    if requested_category:
-        for p in ALL_PLACES:
-            if location_matches(p, requested_locations) and evaluate_category_match(p, requested_category) == 2:
-                has_primary_category_match = True
-                break
-
     scored_places = []
     
     for idx, place in enumerate(ALL_PLACES):
         p_cat = normalize_text(str(get_place_attr(place, ["Category", "category"], "")))
 
         cat_match_level = evaluate_category_match(place, requested_category)
+        
+        # STRICT FIX: If a category is requested, ONLY allow primary matches.
         if requested_category:
-            if cat_match_level == 0:
-                continue
-            if has_primary_category_match and cat_match_level < 2:
+            if cat_match_level < 2:
                 continue
 
         if requested_exclusions and any(excluded in p_cat for excluded in requested_exclusions):
@@ -276,7 +276,6 @@ def score_and_rank_places_nlp(constraints, session_location=None):
         raw_hours = get_place_attr(place, ["Opening and closing hours", "opening_closing_hours", "Operating Hours", "hours"])
         place_open_min, place_close_min = extract_operating_bounds(raw_hours, target_day=target_day)
 
-        # FIX: "open at X" means the place must be open during that time (not exactly at open time)
         if target_open_min is not None:
             if place_open_min is None or place_close_min is None:
                 continue
@@ -306,8 +305,7 @@ def score_and_rank_places_nlp(constraints, session_location=None):
             else:
                 continue
         elif requested_category:
-            base_cat_score = 65.0 if cat_match_level == 2 else 25.0
-            score += base_cat_score + min(15.0, lexical_score * 15.0)
+            score += 65.0 + min(15.0, lexical_score * 15.0)
         else:
             if requested_locations:
                 score += 60.0 + min(30.0, lexical_score * 30.0)
@@ -324,10 +322,10 @@ def score_and_rank_places_nlp(constraints, session_location=None):
         if final_score >= 50.0:
             scored_places.append({"place": place, "score": final_score})
 
-    is_affordable_query = any(w in query_text.lower() for w in ["affordable", "cheap", "budget", "mura", "inexpensive", "low cost", "low price", "student friendly"])
+    is_affordable_query = any(w in query_text.lower() for w in ["affordable", "cheap", "budget", "mura", "inexpensive", "low cost", "low price", "student friendly", "afford"])
     is_nearest_query = any(w in query_text.lower() for w in ["nearest", "closest", "close", "near me", "malapit", "near", "nearby"])
 
-    if is_affordable_query:
+    if is_affordable_query or requested_budget is not None:
         def get_price_key(item):
             price = price_number_from_place(item["place"])
             return price if price is not None else float('inf')
@@ -337,27 +335,30 @@ def score_and_rank_places_nlp(constraints, session_location=None):
         reference_lat, reference_lon = None, None
         ref_name = "town center"
 
-        # Try to extract the specific landmark text
-        match = re.search(r"\b(?:near|nearby|around|close to|in|at)\s+([a-z0-9\s,]+)", query_text, re.IGNORECASE)
-        if match:
-            landmark_query = match.group(1).strip()
-            # Clean up: remove anything after "where", "that", comma, etc.
-            landmark_query = re.split(r'\b(?:where|that|which|is|are)\b|,|\?', landmark_query)[0].strip()
-            
-            if landmark_query:
-                best_match, highest_score = None, 0.0
-                for p in ALL_PLACES:
-                    p_name = str(get_place_attr(p, ["Business name", "business_name", "name"], "")).lower()
-                    score = similarity_score(landmark_query, p_name)
-                    if score > highest_score and score >= 0.70:
-                        highest_score, best_match = score, p
+        if reference_place:
+            reference_lat = reference_place.get("latitude")
+            reference_lon = reference_place.get("longitude")
+            ref_name = str(get_place_attr(reference_place, ["Business name", "business_name", "name"], ""))
+
+        if reference_lat is None:
+            match = re.search(r"\b(?:near|nearby|around|close to|in|at)\s+([a-z0-9\s,]+)", query_text, re.IGNORECASE)
+            if match:
+                landmark_query = match.group(1).strip()
+                landmark_query = re.split(r'\b(?:where|that|which|is|are)\b|,|\?', landmark_query)[0].strip()
                 
-                if best_match:
-                    reference_lat = best_match.get("latitude")
-                    reference_lon = best_match.get("longitude")
-                    ref_name = str(get_place_attr(best_match, ["Business name", "business_name", "name"], ""))
+                if landmark_query:
+                    best_match, highest_score = None, 0.0
+                    for p in ALL_PLACES:
+                        p_name = str(get_place_attr(p, ["Business name", "business_name", "name"], "")).lower()
+                        score = similarity_score(landmark_query, p_name)
+                        if score > highest_score and score >= 0.70:
+                            highest_score, best_match = score, p
+                    
+                    if best_match:
+                        reference_lat = best_match.get("latitude")
+                        reference_lon = best_match.get("longitude")
+                        ref_name = str(get_place_attr(best_match, ["Business name", "business_name", "name"], ""))
         
-        # Fallback to town center
         if reference_lat is None and requested_locations:
             target_town = requested_locations[0].lower()
             town_center = MUNICIPALITY_COORDS.get(target_town)
@@ -602,6 +603,13 @@ def get_response():
             "reply": "I apologize, but I am only a local place finder. I cannot assist with reservations, live waiting times, or real-time operational updates like power outages. I can only help you search for and discover places in Ilocos Norte."
         })
 
+    unsupported_town = detect_unsupported_location(msg_lower)
+    if unsupported_town:
+        supported_str = ", ".join([m.title() for m in MUNICIPALITIES])
+        return jsonify({
+            "reply": f"Sorry! I don't cover <b>{unsupported_town}</b> yet. I currently cover places in <b>{supported_str}</b>."
+        })
+
     if any(w in msg_lower for w in ["weather", "forecast", "temperature", "climate", "umulan", "init"]):
         locs = detect_location_entities(msg_lower)
         target_loc = locs[0] if locs else u_session.get("location", "laoag").lower()
@@ -644,15 +652,8 @@ def get_response():
         current_loc = u_session.get("location", "Laoag").title()
         return jsonify({"reply": f"Hello! I am currently set to search in <b>{current_loc}</b>. How can I help you explore Ilocos Norte right now?"})
 
-    if any(phrase in msg_lower for phrase in THANKS_PHRASES):
+    if contains_phrase(msg_lower, THANKS_PHRASES):
         return jsonify({"reply": "You're very welcome! 😊 Is there anything else I can help you find in Ilocos Norte?"})
-
-    unsupported_town = detect_unsupported_location(msg_lower)
-    if unsupported_town:
-        supported_str = ", ".join([m.title() for m in MUNICIPALITIES])
-        return jsonify({
-            "reply": f"Sorry! I don't cover <b>{unsupported_town}</b> yet. I currently cover places in <b>{supported_str}</b>."
-        })
 
     if u_session["last_places"] and msg_lower in ["1", "2", "3", "4", "5", "option 1", "option 2", "option 3", "option 4", "option 5"]:
         idx_map = {"1": 0, "option 1": 0, "2": 1, "option 2": 1, "3": 2, "option 3": 2, "4": 3, "option 4": 3, "5": 4, "option 5": 4}
@@ -662,29 +663,80 @@ def get_response():
             return jsonify({"reply": format_single_place_detail(chosen_item)})
 
     constraints = extract_constraints_nlp(msg)
-    
     global_matched_place = find_place_globally(msg, ALL_PLACES)
     is_nearby_query = any(w in msg_lower for w in ["nearest", "near", "close", "malapit", "around", "nearby"])
     
-    # Don't hijack if the user is looking for a category near this place
-    if global_matched_place and not constraints.get("category") and not is_nearby_query and any(k in msg_lower for k in ["where", "how to get", "eat at", "go to", "view", "find", "buy"]):
-        p_name = str(get_place_attr(global_matched_place, ["Business name", "business_name", "name"]))
-        p_city = str(get_place_attr(global_matched_place, ["Municipality or city", "Municipality/City", "municipality_city", "city", "municipality", "Municipality"]))
+    # --- FIX: Handle follow-up questions about the current list (e.g., "which one opens at 9am?") ---
+    if (msg_lower.startswith("which one") or msg_lower.startswith("which of") or msg_lower.startswith("which is")) and u_session.get("last_places"):
+        target_open_min = constraints.get("target_opening_time")
+        target_day = constraints.get("target_day")
+        filtered = []
         
-        u_session["location"] = p_city
-        u_session["last_places"] = [{"place": global_matched_place, "score": 100.0}]
-        session.modified = True
+        for item in u_session["last_places"]:
+            place = item["place"]
+            hours = get_place_attr(place, ["Opening and closing hours", "opening_closing_hours", "Operating Hours", "hours"])
+            o_min, c_min = extract_operating_bounds(hours, target_day=target_day)
+            
+            if target_open_min is not None:
+                if o_min is not None and c_min is not None and (o_min <= target_open_min < c_min):
+                    filtered.append(item)
+            else:
+                filtered.append(item)
+                
+        if filtered:
+            u_session["last_places"] = filtered[:5]
+            return jsonify({"reply": format_place_output(filtered, constraints=constraints, current_location=u_session.get("location"))})
+        else:
+            return jsonify({"reply": "None of the previous places match that specific time. Would you like to search again?"})
+
+    # --- FIX: Universal Context Inheritance (e.g., "how about restaurants?") ---
+    last_constraints = u_session.get("last_constraints", {})
+    is_refinement = bool(re.search(r'\b(how about|what about|under|below|less than|max)\b', msg_lower)) or re.match(r'^[^\w]*\d+[^\w]*$', msg_lower)
+    is_followup = is_refinement or len(msg_lower.split()) < 5
+
+    if is_followup:
+        # If no category is specified, inherit it
+        if not constraints.get("category") and not constraints.get("dish") and not constraints.get("required_features"):
+            if last_constraints.get("category"):
+                constraints["category"] = last_constraints.get("category")
+            if not constraints.get("dish") and last_constraints.get("dish"):
+                constraints["dish"] = last_constraints.get("dish")
         
-        reply = f"<b>{p_name}</b> is located in <b>{p_city}</b>.<br><br>" + format_single_place_detail(global_matched_place)
-        return jsonify({"reply": reply})
-    
+        # If no budget is specified, inherit it!
+        if constraints.get("max_budget") is None and last_constraints.get("max_budget") is not None:
+            constraints["max_budget"] = last_constraints.get("max_budget")
+            
+        # If no location is specified, inherit it!
+        if not constraints.get("locations") and last_constraints.get("locations"):
+            constraints["locations"] = last_constraints.get("locations")
+
     has_meaningful_intent = (
         constraints.get("category") or 
         constraints.get("dish") or 
         constraints.get("required_features") or 
         constraints.get("locations") or
-        constraints.get("max_budget") is not None
+        constraints.get("max_budget") is not None or
+        global_matched_place is not None
     )
+
+    # --- FIX: Proximity search near a specific place ---
+    if global_matched_place and is_nearby_query:
+        constraints["reference_place"] = global_matched_place
+        p_city = str(get_place_attr(global_matched_place, ["Municipality or city", "Municipality/City", "municipality_city", "city", "municipality", "Municipality"]))
+        if p_city:
+            u_session["location"] = p_city.lower()
+            constraints["locations"] = [p_city.lower()]
+
+    # --- FIX: "Where is X?" lookup (Don't overwrite session location!) ---
+    if global_matched_place and not is_nearby_query and any(k in msg_lower for k in ["where", "how to get", "eat at", "go to", "view", "find"]):
+        p_name = str(get_place_attr(global_matched_place, ["Business name", "business_name", "name"]))
+        p_city = str(get_place_attr(global_matched_place, ["Municipality or city", "Municipality/City", "municipality_city", "city", "municipality", "Municipality"]))
+        
+        u_session["last_places"] = [{"place": global_matched_place, "score": 100.0}]
+        session.modified = True
+        
+        reply = f"<b>{p_name}</b> is located in <b>{p_city}</b>.<br><br>" + format_single_place_detail(global_matched_place)
+        return jsonify({"reply": reply})
     
     if not has_meaningful_intent:
         if any(w in msg_lower for w in ["hi", "hello", "hey", "sup", "im ", "i'm ", "name is", "my name"]):
@@ -698,20 +750,11 @@ def get_response():
 
     has_explicit_location = bool(constraints.get("locations"))
 
-    last_constraints = u_session.get("last_constraints", {})
-    
-    if not constraints.get("category") and not constraints.get("dish") and not constraints.get("required_features") and last_constraints.get("category"):
-        clean_query = normalize_text(msg)
-        for loc in constraints.get("locations", []):
-            clean_query = clean_query.replace(loc, "")
-        
-        clean_query = re.sub(r"\b(in|near|at|around|to|the|a|an|what|about|how|is|are|there|any|for)\b", "", clean_query).strip()
-        
-        if len(clean_query) == 0:
-            constraints["category"] = last_constraints.get("category")
-
+    # --- FIX: Pick the LAST mentioned location, and throw away the rest! ---
     if constraints.get("locations"):
-        u_session["location"] = constraints["locations"][0]
+        target_loc = constraints["locations"][-1]
+        u_session["location"] = target_loc
+        constraints["locations"] = [target_loc]
     elif u_session.get("location"):
         constraints["locations"] = [u_session["location"]]
 
@@ -719,11 +762,12 @@ def get_response():
     ranked_results = score_and_rank_places_nlp(constraints, current_loc)
 
     u_session["last_constraints"] = constraints
+    session.modified = True
+    
     if ranked_results:
         qualifying = [item for item in ranked_results if item["score"] >= 50.0]
         if qualifying:
             u_session["last_places"] = qualifying[:5]
-            session.modified = True
 
     return jsonify({
         "reply": format_place_output(

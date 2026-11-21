@@ -44,15 +44,14 @@ CATEGORY_SYNONYMS = {
         "bbq", "barbecue", "fastfood", "fast food", "empanada", "empanadaan",
         "bagnet", "poqui-poqui", "poquipoqui", "poqui poqui", "ilocano food", "local dishes",
         "carinderia", "snack bar", "food stall", "food stalls",
-        "catering", "catering services", "food court", "foodcourt", "street food", "local delicacy stall",
-        "eat", "meal", "meals", "food", "hungry", "starving", "want to eat", "need to eat"
+        "catering", "catering services", "food court", "foodcourt", "street food", "local delicacy stall"
     ],
     "bakery": [
         "bakery", "bakeshop", "cake", "cakes", "pastry", "pastries", "bread", "breads", "dessert", "desserts"
     ],
     "samgyupsal": ["samgyupsal", "samgyup", "korean bbq", "korean barbecue", "k-grill", "korean restaurant"],
     "cafe": [
-        "cafe", "cafes", "coffee", "coffee shop", "coffee shops", "bakeshop",
+        "cafe", "cafes", "coffee", "coffee shop", "coffee shops", 
         "espresso", "latte", "tea", "tea shop", "cozy cafe", "cozy café", "café",
         "confectionery", "confectionery shop", "beverage", "beverage spot", "milk tea bar",
         "smoothie", "smoothies", "frappe", "frappes", "drink", "drinks",
@@ -62,8 +61,7 @@ CATEGORY_SYNONYMS = {
     "airport": ["airport", "airplanes", "airplane", "flights", "flight", "fly", "flying", "plane", "planes", "travel by air", "travel via airplane"],
     "mall": [
         "mall", "malls", "shopping mall", "shopping center", "department store", "plaza",
-        "public market", "marketplace", "commercial center", "souvenir shop", "pasalubong center", "pasalubong", "retail",
-        "buy", "shop", "shopping"
+        "public market", "marketplace", "commercial center", "souvenir shop", "pasalubong center", "pasalubong", "retail"
     ],
     "karaoke": ["karaoke", "ktv", "singing", "music lounge", "videoke"],
     "dealership": ["dealership", "motorcycle", "motorcycles", "car dealership", "showroom", "auto sales", "toyota", "honda", "yamaha"],
@@ -85,8 +83,7 @@ CATEGORY_SYNONYMS = {
     "gas station": ["gas station", "gasoline station", "gasoline", "gas", "fuel", "petrol", "petrol station"],
     "supermarket": [
         "supermarket", "supermarkets", "grocery", "grocery store", "groceries",
-        "mart", "convenience store", "hypermarket", "variety store", "general merchandise",
-        "buy", "shop", "shopping"
+        "mart", "convenience store", "hypermarket", "variety store", "general merchandise"
     ],
     "laundry": ["laundry", "laundry service", "laundry shop", "dry cleaning", "wash and fold"],
     "school": ["school", "elementary school", "high school", "integrated school", "educational network"],
@@ -114,7 +111,8 @@ FEATURE_KEYWORDS = list(FEATURE_ALIASES.keys())
 THINKING_PHRASES = {"still thinking", "wait", "hold on", "give me a sec", "give me a minute", "thinking", "not sure yet", "wait a bit"}
 READY_PHRASES = {"im ready", "i'm ready", "ready", "ok ready", "okay ready"}
 GREETINGS = {"hello", "hi", "hey", "sup", "good morning", "good afternoon", "good evening"}
-THANKS_PHRASES = {"thanks", "thank you", "ty", "thx", "thank you so much", "salamat"}
+# REMOVED "ty" TO FIX THE "thirsty" BUG
+THANKS_PHRASES = {"thanks", "thank you", "thx", "thank you so much", "salamat"}
 CONVERSATIONAL_FILLER = {
     "i dont know", "i don't know", "sure", "searching for laoag", "yes", "no", "maybe", 
     "ok", "okay", "alright", "idk", "not sure", "help", "what can you do"

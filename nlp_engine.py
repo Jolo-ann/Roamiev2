@@ -2,6 +2,7 @@
 import re
 import math
 import difflib
+import unicodedata
 from collections import Counter
 from difflib import SequenceMatcher
 from nltk.tokenize import wordpunct_tokenize
@@ -26,7 +27,8 @@ def is_non_search_input(text):
 def normalize_text(text):
     if not text:
         return ""
-    text = str(text).lower().replace("’", "'").replace('"', '').replace("–", "-").replace("—", "-").replace("/", " ")
+    text = unicodedata.normalize('NFKD', str(text)).encode('ASCII', 'ignore').decode('utf-8')
+    text = text.lower().replace("’", "'").replace('"', '').replace("–", "-").replace("—", "-").replace("/", " ")
     return re.sub(r"\s+", " ", text).strip()
 
 def tokenize_text(text):
@@ -84,7 +86,6 @@ def fuzzy_phrase_present(text, phrase, threshold=0.80):
 def phrase_present(text, phrase):
     return fuzzy_phrase_present(text, phrase, threshold=0.82)
 
-# --- FIX: Add "don't like" / "hate" to negation triggers ---
 NEGATION_TRIGGERS = {
     "no", "not", "dont", "don't", "dont want", "don't want", "doesnt", "doesn't", 
     "except", "excluding", "without", "other than", "hate", "avoid", "instead of",
@@ -111,17 +112,26 @@ def detect_unsupported_intent(text):
     return None
 
 def detect_location_entities(text):
-    clean, found = normalize_text(text), set()
+    clean, found = normalize_text(text), []
     for municipality, aliases in MUNICIPALITY_ALIASES.items():
         for alias in aliases:
             alias_norm = normalize_text(alias)
-            if re.search(rf"\b{re.escape(alias_norm)}\b", clean):
-                found.add(municipality)
+            match = re.search(rf"\b{re.escape(alias_norm)}\b", clean)
+            if match:
+                found.append((municipality, match.start()))
                 break
-    return list(found)
+    # Sort by position in the text so the LAST mentioned location is chosen by the app
+    found.sort(key=lambda x: x[1])
+    return [f[0] for f in found]
 
 def detect_unsupported_location(text):
     clean = normalize_text(text)
+    
+    # FIX: Check the UNSUPPORTED_LOCATIONS from config.py first!
+    for loc in UNSUPPORTED_LOCATIONS:
+        if re.search(rf"\b{re.escape(loc)}\b", clean):
+            return loc.title()
+
     KNOWN_UNSUPPORTED = [
         "vigan", "baguio", "manila", "candon", "la union", "pangasinan", 
         "ilocos sur", "abra", "cagayan", "isabela", "tuguegarao", "africa", 
@@ -142,6 +152,13 @@ def detect_category_entity(text):
     clean = normalize_text(text)
     if not clean:
         return None
+        
+    # Universal Intent Mapping
+    if any(w in clean for w in ["hungry", "starving", "want to eat", "need food", "meal", "eat", "food"]):
+        return "restaurant"
+    if any(w in clean for w in ["thirsty", "want a drink", "refreshment", "drink"]):
+        return "cafe"
+
     clean_sing = " ".join(normalized_tokens(clean))
     matches = []
     for category, aliases in CATEGORY_SYNONYMS.items():
@@ -152,6 +169,10 @@ def detect_category_entity(text):
                 for m in re.finditer(rf"\b{re.escape(alias_sing)}\b", target_text):
                     if not is_span_negated(clean, m.start()):
                         matches.append((len(alias_sing), m.start(), category))
+                if alias_sing in target_text and len(alias_sing) > 3:
+                    if not any(cat == category for _, _, cat in matches):
+                        matches.append((len(alias_sing), target_text.find(alias_sing), category))
+
     if not matches:
         for word in clean.split():
             if len(word) > 3: 
@@ -161,17 +182,16 @@ def detect_category_entity(text):
                         return category
     if not matches:
         return None
-    # FIX: Sort by longest match first (so "coffee shop" beats "shop")
     matches.sort(key=lambda item: (-item[0], item[1]))
     return matches[0][2]
 
 def detect_exclusions(text):
     clean, exclusions = normalize_text(text), []
-    # FIX: Add "don't like", "hate", "dislike" to pattern
-    pattern = r"\b(?:dont want|don't want|dont like|don't like|hate|dislike|not a fan of|no|not|excluding|except|without|other than)\b\s+(?:a\s+|an\s+|the\s+)?([a-z\s]+)"
+    pattern = r"\b(?:dont want|don't want|dont like|don't like|hate|dislike|not a fan of|no|not|excluding|except|without|other than)\b\s+(?:a\s+|an\s+|the\s+)?([a-z0-9\s]+)"
     for match in re.findall(pattern, clean):
+        clause = re.split(r'[.,!?]', match)[0].strip()
         for cat_key, synonyms in CATEGORY_SYNONYMS.items():
-            if any(syn in match for syn in synonyms):
+            if any(re.search(rf"\b{re.escape(syn)}\b", clause) for syn in synonyms):
                 exclusions.append(cat_key)
     return list(set(exclusions))
 
@@ -188,7 +208,6 @@ def detect_excluded_features(text):
                     break
     return list(set(found))
 
-# --- NEW: Detect excluded locations like "hate Paoay" ---
 def detect_excluded_locations(text):
     clean = normalize_text(text)
     found = []
@@ -213,13 +232,13 @@ def detect_feature_entities(text):
                 if not is_span_negated(clean, m.start()):
                     found.append(feat)
                     break
-    m_feat = re.search(r"\b(?:with|has|offering|serves?|serving)\s+([a-z0-9\s]+)", clean)
+    m_feat = re.search(r"\b(?:with|has|offering|serves?|serving)\s+([a-z\s]+)", clean)
     if m_feat:
         ext = m_feat.group(1).strip()
-        stop_phrases = {"card", "can i", "can", "i", "a", "the", "in", "near", "for", "me"}
+        stop_phrases = {"card", "can i", "can", "i", "a", "the", "in", "near", "for", "me", "pesos", "php"}
         ext_words = ext.split()
         if len(ext_words) <= 2 and ext not in found and len(ext) > 2 and ext not in stop_phrases:
-            if not ext.isdigit() and not re.match(r"^\d+$", ext):
+            if not any(c.isdigit() for c in ext):
                 found.append(ext)
     return list(set(found))
 
@@ -292,11 +311,15 @@ def parse_budget(query_text):
     patterns = [
         r"(?:₱|php\s*|p\s*)\s*(\d[\d,]*(?:\.\d+)?)",
         r"(\d[\d,]*(?:\.\d+)?)\s*(?:pesos?|php)",
-        r"\b(?:only\s*have|have|budget|under|below|less than|up to|max|cheap|with|spend|buy|for)\b.*?(?:₱|php|p)?\s*(\d[\d,]*)",
+        r"\b(?:only\s*have|have|budget|under|below|less than|up to|max|cheap|with|spend|buy|for|how about|what about)\b.*?(?:₱|php|p)?\s*(\d[\d,]*)",
+        r"^\s*(\d[\d,]*)\s*$"
     ]
     for p in patterns:
         for m in re.finditer(p, clean, flags=re.IGNORECASE):
             try:
+                full_match = m.group(0)
+                if re.search(r'\d+\s*(?::\d+|am|pm|o\'clock)', full_match, re.IGNORECASE):
+                    continue
                 val = float(m.group(1).replace(",", ""))
                 if val > 0:
                     candidates.append(val)
@@ -326,7 +349,6 @@ def extract_constraints_nlp(query_text):
     clean_text = normalize_text(query_text)
     locations = detect_location_entities(clean_text)
     excluded_locs = detect_excluded_locations(clean_text)
-    # Remove any excluded locations from the "positive" list
     locations = [loc for loc in locations if loc not in excluded_locs]
     
     days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
@@ -336,9 +358,9 @@ def extract_constraints_nlp(query_text):
         "category": detect_category_entity(clean_text),
         "exclusions": detect_exclusions(clean_text),
         "excluded_features": detect_excluded_features(clean_text),
-        "excluded_locations": excluded_locs,  # NEW
+        "excluded_locations": excluded_locs,
         "locations": locations,
-        "location": locations[0] if locations else None,
+        "location": locations[-1] if locations else None,
         "dish": detect_dish_entity(clean_text),
         "max_budget": parse_budget(clean_text),
         "required_features": detect_feature_entities(clean_text),
@@ -376,8 +398,6 @@ def lexical_overlap_score(query_text, place_text, place_corpus_list=None, idf_ca
 
 def extract_place_name_query(text):
     clean = normalize_text(text)
-    if any(k in clean for k in ["cafe", "restaurant", "hotel", "hospital", "bank", "gym", "bar", "coffee"]):
-        return None
     patterns = [
         r"\bwhere\s+is\s+(.+)", r"\bwhere\s+can\s+i\s+find\s+(.+)",
         r"\bwhere\s+to\s+find\s+(.+)", r"\bi\s+want\s+to\s+eat\s+at\s+(.+)",
@@ -387,8 +407,16 @@ def extract_place_name_query(text):
         m = re.search(p, clean)
         if m:
             cleaned = re.sub(r"[^\w\s]", "", m.group(1).strip()).strip()
+            cleaned = re.sub(r"\b(nearest|restaurant|hotel|shop|store|the|a|an|in|at|near)\b", "", cleaned).strip()
+            
             if cleaned and cleaned not in MUNICIPALITIES and cleaned not in ["laoag city", "batac city"]:
-                return cleaned
+                is_just_category = False
+                for cat, aliases in CATEGORY_SYNONYMS.items():
+                    if cleaned in aliases or cleaned == cat:
+                        is_just_category = True
+                        break
+                if not is_just_category:
+                    return cleaned
     return None
 
 def find_place_globally(text, places_list):
@@ -396,6 +424,7 @@ def find_place_globally(text, places_list):
     clean_target = normalize_text(target_name)
     if not clean_target or clean_target in MUNICIPALITIES:
         return None
+        
     best_match, highest_score = None, 0.0
     for place in (places_list or []):
         p_name = ""
@@ -403,17 +432,33 @@ def find_place_globally(text, places_list):
             if k in place and place[k]:
                 p_name = str(place[k])
                 break
-        if not p_name:
-            for pk, pv in place.items():
-                if pk.lower().replace("_", " ") in ["business name", "name"] and pv:
-                    p_name = str(pv)
-                    break
+        if not p_name: continue
+        
         clean_p_name = normalize_text(p_name)
-        if not clean_p_name:
-            continue
-        if clean_target in clean_p_name or clean_p_name in clean_target:
+        if not clean_p_name: continue
+        
+        # 1. Direct substring match (e.g., "bdo unibank" in "BDO Unibank - Laoag Main")
+        if clean_p_name in clean_target or clean_target in clean_p_name:
             return place
+            
+        # 2. Fuzzy phrase match (e.g., "beam me up" -> "Bean Me Up")
+        if fuzzy_phrase_present(clean_target, clean_p_name, threshold=0.75):
+            return place
+            
+        # 3. Sequence matcher score
         score = similarity_score(clean_target, clean_p_name)
-        if score > highest_score and score >= 0.75:
+        if score > highest_score and score >= 0.65:
             highest_score, best_match = score, place
+            
+    # 4. Fallback for word overlap (e.g., "bdo unibank" -> "bdo network bank")
+    if not best_match:
+        target_words = set(clean_target.split())
+        valid_words = [w for w in target_words if len(w) > 2]
+        if valid_words:
+            for place in (places_list or []):
+                p_name = str(next((place[k] for k in ["Business name", "business_name", "name"] if k in place and place[k]), ""))
+                clean_p_name = normalize_text(p_name)
+                if all(w in clean_p_name for w in valid_words):
+                    return place
+
     return best_match
