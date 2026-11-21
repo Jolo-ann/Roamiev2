@@ -644,7 +644,7 @@ def get_response():
         current_loc = u_session.get("location", "Laoag").title()
         return jsonify({"reply": f"Hello! I am currently set to search in <b>{current_loc}</b>. How can I help you explore Ilocos Norte right now?"})
 
-    if any(re.search(rf"\b{re.escape(phrase)}\b", msg_lower) for phrase in THANKS_PHRASES):
+    if any(phrase in msg_lower for phrase in THANKS_PHRASES):
         return jsonify({"reply": "You're very welcome! 😊 Is there anything else I can help you find in Ilocos Norte?"})
 
     unsupported_town = detect_unsupported_location(msg_lower)
@@ -664,18 +664,19 @@ def get_response():
     constraints = extract_constraints_nlp(msg)
     
     global_matched_place = find_place_globally(msg, ALL_PLACES)
-    if global_matched_place:
-        # If the user explicitly asked "where is X", show X immediately
-        if any(k in msg_lower for k in ["where", "how to get", "find", "locate"]):
-            p_name = str(get_place_attr(global_matched_place, ["Business name", "business_name", "name"]))
-            p_city = str(get_place_attr(global_matched_place, ["Municipality or city", "Municipality/City", "municipality_city", "city", "municipality", "Municipality"]))
-            
-            u_session["location"] = p_city
-            u_session["last_places"] = [{"place": global_matched_place, "score": 100.0}]
-            session.modified = True
-            
-            reply = f"<b>{p_name}</b> is located in <b>{p_city}</b>.<br><br>" + format_single_place_detail(global_matched_place)
-            return jsonify({"reply": reply})
+    is_nearby_query = any(w in msg_lower for w in ["nearest", "near", "close", "malapit", "around", "nearby"])
+    
+    # Don't hijack if the user is looking for a category near this place
+    if global_matched_place and not constraints.get("category") and not is_nearby_query and any(k in msg_lower for k in ["where", "how to get", "eat at", "go to", "view", "find", "buy"]):
+        p_name = str(get_place_attr(global_matched_place, ["Business name", "business_name", "name"]))
+        p_city = str(get_place_attr(global_matched_place, ["Municipality or city", "Municipality/City", "municipality_city", "city", "municipality", "Municipality"]))
+        
+        u_session["location"] = p_city
+        u_session["last_places"] = [{"place": global_matched_place, "score": 100.0}]
+        session.modified = True
+        
+        reply = f"<b>{p_name}</b> is located in <b>{p_city}</b>.<br><br>" + format_single_place_detail(global_matched_place)
+        return jsonify({"reply": reply})
     
     has_meaningful_intent = (
         constraints.get("category") or 
@@ -698,10 +699,6 @@ def get_response():
     has_explicit_location = bool(constraints.get("locations"))
 
     last_constraints = u_session.get("last_constraints", {})
-
-    if not constraints.get("max_budget") and last_constraints.get("max_budget"):
-        if not any(w in msg_lower for w in ["any", "no budget", "unlimited", "expensive", "any price"]):
-            constraints["max_budget"] = last_constraints.get("max_budget")
     
     if not constraints.get("category") and not constraints.get("dish") and not constraints.get("required_features") and last_constraints.get("category"):
         clean_query = normalize_text(msg)
@@ -714,10 +711,9 @@ def get_response():
             constraints["category"] = last_constraints.get("category")
 
     if constraints.get("locations"):
-        u_session["location"] = constraints["locations"][-1] # Save the last one mentioned
+        u_session["location"] = constraints["locations"][0]
     elif u_session.get("location"):
         constraints["locations"] = [u_session["location"]]
-        constraints["location"] = u_session["location"]
 
     current_loc = u_session.get("location", "Laoag")
     ranked_results = score_and_rank_places_nlp(constraints, current_loc)

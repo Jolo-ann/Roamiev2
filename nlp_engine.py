@@ -111,20 +111,14 @@ def detect_unsupported_intent(text):
     return None
 
 def detect_location_entities(text):
-    clean = normalize_text(text)
-    found = []
+    clean, found = normalize_text(text), set()
     for municipality, aliases in MUNICIPALITY_ALIASES.items():
         for alias in aliases:
             alias_norm = normalize_text(alias)
-            for m in re.finditer(rf"\b{re.escape(alias_norm)}\b", clean):
-                found.append((m.start(), municipality))
-                
-    found.sort(key=lambda x: x[0])
-    ordered = []
-    for _, muni in found:
-        if muni not in ordered:
-            ordered.append(muni)
-    return ordered
+            if re.search(rf"\b{re.escape(alias_norm)}\b", clean):
+                found.add(municipality)
+                break
+    return list(found)
 
 def detect_unsupported_location(text):
     clean = normalize_text(text)
@@ -303,15 +297,7 @@ def parse_budget(query_text):
     for p in patterns:
         for m in re.finditer(p, clean, flags=re.IGNORECASE):
             try:
-                val_str = m.group(1).replace(",", "")
-                match_end = m.end(1)
-                trailing_text = clean[match_end:match_end+6]
-                
-                # If the number is followed by "AM", "PM", or ":", it's a time, not a budget
-                if re.search(r"^(?:\s*(?:am|pm|:|o'clock))", trailing_text, re.IGNORECASE):
-                    continue
-                    
-                val = float(val_str)
+                val = float(m.group(1).replace(",", ""))
                 if val > 0:
                     candidates.append(val)
             except (ValueError, IndexError):
@@ -340,10 +326,8 @@ def extract_constraints_nlp(query_text):
     clean_text = normalize_text(query_text)
     locations = detect_location_entities(clean_text)
     excluded_locs = detect_excluded_locations(clean_text)
+    # Remove any excluded locations from the "positive" list
     locations = [loc for loc in locations if loc not in excluded_locs]
-
-
-    primary_location = locations[-1] if locations else None
     
     days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
     target_day = next((day for day in days if re.search(rf"\b{day}\b", clean_text)), None)
@@ -352,9 +336,9 @@ def extract_constraints_nlp(query_text):
         "category": detect_category_entity(clean_text),
         "exclusions": detect_exclusions(clean_text),
         "excluded_features": detect_excluded_features(clean_text),
-        "excluded_locations": excluded_locs,
+        "excluded_locations": excluded_locs,  # NEW
         "locations": locations,
-        "location": primary_location, # Set primary to the last one mentioned
+        "location": locations[0] if locations else None,
         "dish": detect_dish_entity(clean_text),
         "max_budget": parse_budget(clean_text),
         "required_features": detect_feature_entities(clean_text),
@@ -392,6 +376,8 @@ def lexical_overlap_score(query_text, place_text, place_corpus_list=None, idf_ca
 
 def extract_place_name_query(text):
     clean = normalize_text(text)
+    if any(k in clean for k in ["cafe", "restaurant", "hotel", "hospital", "bank", "gym", "bar", "coffee"]):
+        return None
     patterns = [
         r"\bwhere\s+is\s+(.+)", r"\bwhere\s+can\s+i\s+find\s+(.+)",
         r"\bwhere\s+to\s+find\s+(.+)", r"\bi\s+want\s+to\s+eat\s+at\s+(.+)",
@@ -402,10 +388,7 @@ def extract_place_name_query(text):
         if m:
             cleaned = re.sub(r"[^\w\s]", "", m.group(1).strip()).strip()
             if cleaned and cleaned not in MUNICIPALITIES and cleaned not in ["laoag city", "batac city"]:
-                # Only reject if the query is JUST a category word (e.g. "where is a cafe")
-                cat_match = detect_category_entity(cleaned)
-                if not cat_match or len(cleaned.split()) > 1:
-                    return cleaned
+                return cleaned
     return None
 
 def find_place_globally(text, places_list):
