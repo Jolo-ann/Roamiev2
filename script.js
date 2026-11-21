@@ -2,6 +2,7 @@
 const chatForm = document.getElementById('chat-form');
 const userInput = document.getElementById('user-input');
 const chatBox = document.getElementById('chat-box');
+const noticeBanner = document.getElementById('notice-banner');
 
 const aboutBtn = document.getElementById('aboutBtn');
 const aboutModal = document.getElementById('aboutModal');
@@ -39,15 +40,26 @@ chatForm.addEventListener('submit', async (e) => {
     appendMessage(message, 'user-message');
     userInput.value = '';
 
+    // Hide the notice banner once the user starts chatting
+    if (noticeBanner) noticeBanner.style.display = 'none';
+
     await sendMessageToServer(message);
 });
 
 async function sendChoice(val, label) {
     appendMessage(label || `View details for #${val}`, 'user-message');
+    // Hide the notice banner if a button is clicked
+    if (noticeBanner) noticeBanner.style.display = 'none';
     await sendMessageToServer(val);
 }
 
 async function sendMessageToServer(messageText) {
+    // --- FIX: Disable input and button while thinking ---
+    userInput.disabled = true;
+    const submitBtn = chatForm.querySelector('button[type="submit"]');
+    if (submitBtn) submitBtn.disabled = true;
+    // ----------------------------------------------------
+    
     const typingIndicator = showTypingIndicator();
 
     try {
@@ -63,6 +75,12 @@ async function sendMessageToServer(messageText) {
     } catch (error) {
         removeTypingIndicator(typingIndicator);
         appendMessage("Error: Could not process request.", 'bot-message');
+    } finally {
+        // --- FIX: Re-enable input and button ---
+        userInput.disabled = false;
+        if (submitBtn) submitBtn.disabled = false;
+        userInput.focus();
+        // ---------------------------------------
     }
 }
 
@@ -142,6 +160,12 @@ async function fetchWeather(locationKey) {
     
     if (!loc) return;
 
+    // --- FIX: Disable input while fetching weather ---
+    userInput.disabled = true;
+    const submitBtn = chatForm.querySelector('button[type="submit"]');
+    if (submitBtn) submitBtn.disabled = true;
+    // -------------------------------------------------
+
     const typingIndicator = showTypingIndicator();
 
     try {
@@ -165,9 +189,15 @@ async function fetchWeather(locationKey) {
     } catch (error) {
         // If the JS fetch fails, send a message to the backend to fetch it instead!
         removeTypingIndicator(typingIndicator);
-        sendMessageToServer(`What is the weather in ${loc.name}?`);
+        // Note: sendMessageToServer will handle its own disable/enable logic
+        await sendMessageToServer(`What is the weather in ${loc.name}?`);
     } finally {
         if (weatherSelect) weatherSelect.value = "";
+        // --- FIX: Re-enable input ---
+        userInput.disabled = false;
+        if (submitBtn) submitBtn.disabled = false;
+        userInput.focus();
+        // ----------------------------
     }
 }
 
