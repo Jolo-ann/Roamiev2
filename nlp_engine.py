@@ -19,36 +19,6 @@ NON_SEARCH_PHRASES = {
     "help", "what can you do", "hi", "hello"
 }
 
-def build_vocabulary(places_list):
-    vocab = set(STOPWORDS)
-    vocab.update(MUNICIPALITIES)
-    
-    for cat, aliases in CATEGORY_SYNONYMS.items():
-        for a in aliases: vocab.add(normalize_text(a))
-    for feat, aliases in FEATURE_ALIASES.items():
-        for a in aliases: vocab.add(normalize_text(a))
-    for dish in LOCAL_DISHES: vocab.add(normalize_text(dish))
-
-    vocab.update([
-        "want", "need", "looking", "find", "show", "give", "near", "around", "place", "places", 
-        "where", "is", "are", "there", "any", "for", "me", "with", "has", "have", "open", 
-        "until", "midnight", "noon", "am", "pm", "now", "today", "tomorrow", "cheap", "affordable", 
-        "budget", "price", "love", "like", "hate", "dislike", "how", "about", "which", "one", 
-        "opens", "can", "i", "you", "thanks", "thank", "hello", "hi", "drink", "eat", "buy"
-    ])
-
-    for p in places_list:
-        name = str(p.get("Business name", p.get("business_name", p.get("name", ""))))
-        for w in re.findall(r'\w+', name.lower()):
-            if len(w) > 2: vocab.add(w)
-            
-        kws = p.get("Keywords and synonyms", p.get("keywords_synonyms", p.get("keywords", [])))
-        if isinstance(kws, list):
-            for k in kws:
-                for w in re.findall(r'\w+', str(k).lower()):
-                    if len(w) > 2: vocab.add(w)
-    return vocab
-
 def is_non_search_input(text):
     clean = normalize_text(text)
     return clean in NON_SEARCH_PHRASES or any(clean == p for p in NON_SEARCH_PHRASES)
@@ -156,55 +126,23 @@ def detect_location_entities(text):
             ordered.append(muni)
     return ordered
 
-def detect_unsupported_location(text, all_vocab=None):
+def detect_unsupported_location(text):
     clean = normalize_text(text)
-
-    # Dynamic detection: identify an unfamiliar place immediately after a
-    # location preposition (for example, "in Vigan" or "near Baguio").
-    if all_vocab is not None:
-        match = re.search(r"\b(?:in|at|near|to|around)\s+([a-z\s]+)", clean)
-        if match:
-            potential_loc = match.group(1).strip()
-            words = potential_loc.split()
-            if words:
-                word = words[0]
-                if word not in all_vocab and len(word) > 2 and word.isalpha():
-                    return word.title()
-
-    # Keep the previous checks as a backward-compatible fallback for callers
-    # that still use detect_unsupported_location(text) with one argument.
-    known_unsupported = [
-        "vigan", "baguio", "manila", "candon", "la union", "pangasinan",
-        "ilocos sur", "abra", "cagayan", "isabela", "tuguegarao", "africa",
+    KNOWN_UNSUPPORTED = [
+        "vigan", "baguio", "manila", "candon", "la union", "pangasinan", 
+        "ilocos sur", "abra", "cagayan", "isabela", "tuguegarao", "africa", 
         "cebu", "davao", "boracay", "subic", "clark", "pampanga", "bulacan"
     ]
-    for loc in known_unsupported:
+    for loc in KNOWN_UNSUPPORTED:
         if re.search(rf"\b{re.escape(loc)}\b", clean):
             return loc.title()
-
     words = clean.split()
     if len(words) == 1 and len(clean) >= 3:
-        is_supported = any(
-            clean in aliases or clean == muni
-            for muni, aliases in MUNICIPALITY_ALIASES.items()
-        )
+        is_supported = any(clean in aliases or clean == muni for muni, aliases in MUNICIPALITY_ALIASES.items())
         if not is_supported:
             if not detect_category_entity(clean) and not detect_feature_entities(clean) and not detect_dish_entity(clean):
                 return clean.title()
     return None
-
-
-def has_unknown_words(text, all_vocab):
-    clean = normalize_text(text)
-    tokens = re.findall(r"[a-z]+", clean)
-
-    unknown_words = [
-        token for token in tokens
-        if token not in all_vocab and len(token) > 2
-    ]
-
-    # Two or more unknown words are treated as likely gibberish or out-of-scope input.
-    return len(unknown_words) >= 2
 
 def detect_category_entity(text):
     clean = normalize_text(text)
@@ -301,13 +239,6 @@ def detect_dish_entity(text):
 def parse_time_to_minutes(time_str):
     if not time_str:
         return None
-        
-    time_lower = str(time_str).strip().lower()
-    if "midnight" in time_lower:
-        return 24 * 60  # 1440 minutes
-    if "noon" in time_lower:
-        return 12 * 60  # 720 minutes
-        
     match = re.search(r"(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?", str(time_str).strip().upper())
     if not match:
         return None
@@ -410,8 +341,8 @@ def extract_constraints_nlp(query_text):
     locations = detect_location_entities(clean_text)
     excluded_locs = detect_excluded_locations(clean_text)
     locations = [loc for loc in locations if loc not in excluded_locs]
-    
-    # Use the LAST mentioned location as the primary one
+
+
     primary_location = locations[-1] if locations else None
     
     days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
@@ -423,7 +354,7 @@ def extract_constraints_nlp(query_text):
         "excluded_features": detect_excluded_features(clean_text),
         "excluded_locations": excluded_locs,
         "locations": locations,
-        "location": primary_location,
+        "location": primary_location, # Set primary to the last one mentioned
         "dish": detect_dish_entity(clean_text),
         "max_budget": parse_budget(clean_text),
         "required_features": detect_feature_entities(clean_text),

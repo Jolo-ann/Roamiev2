@@ -6,9 +6,15 @@ import urllib.request
 import urllib.error
 from flask import Flask, request, jsonify, render_template, session
 from config import (
-    STATE_IDLE, MUNICIPALITIES,
+    STATE_IDLE, MUNICIPALITIES, 
     MUNICIPALITY_ALIASES, CATEGORY_SYNONYMS, FEATURE_ALIASES,
-    THINKING_PHRASES, READY_PHRASES, GREETINGS, THANKS_PHRASES
+    THINKING_PHRASES, READY_PHRASES, GREETINGS, THANKS_PHRASES # <-- ADD THANKS_PHRASES
+)
+
+from config import (
+    STATE_IDLE, MUNICIPALITIES, 
+    MUNICIPALITY_ALIASES, CATEGORY_SYNONYMS, FEATURE_ALIASES,
+    THINKING_PHRASES, READY_PHRASES, GREETINGS
 )
 from nlp_engine import (
     normalize_text, normalized_tokens, extract_constraints_nlp,
@@ -16,8 +22,7 @@ from nlp_engine import (
     detect_category_entity, detect_feature_entities,
     extract_operating_bounds, lexical_overlap_score, phrase_present,
     extract_place_name_query, is_non_search_input, find_place_globally,
-    content_tokens, detect_unsupported_intent, similarity_score,
-    has_unknown_words, build_vocabulary
+    content_tokens, detect_unsupported_intent, similarity_score
 )
 
 app = Flask(__name__)
@@ -103,7 +108,6 @@ def get_all_places():
     return dataset if isinstance(dataset, list) else []
 
 ALL_PLACES = get_all_places()
-ALL_VOCAB = build_vocabulary(ALL_PLACES)
 
 def get_place_attr(place, keys, default="N/A"):
     for key in keys:
@@ -643,19 +647,12 @@ def get_response():
     if any(re.search(rf"\b{re.escape(phrase)}\b", msg_lower) for phrase in THANKS_PHRASES):
         return jsonify({"reply": "You're very welcome! 😊 Is there anything else I can help you find in Ilocos Norte?"})
 
-    # --- UNIVERSAL FIX: Strict validation using dynamic vocabulary ---
-    unsupported_town = detect_unsupported_location(msg_lower, ALL_VOCAB)
+    unsupported_town = detect_unsupported_location(msg_lower)
     if unsupported_town:
         supported_str = ", ".join([m.title() for m in MUNICIPALITIES])
         return jsonify({
             "reply": f"Sorry! I don't cover <b>{unsupported_town}</b> yet. I currently cover places in <b>{supported_str}</b>."
         })
-
-    if has_unknown_words(msg_lower, ALL_VOCAB):
-        return jsonify({
-            "reply": "I'm sorry, but I didn't understand that. I can only help you find places to visit, eat, or stay in Ilocos Norte. Try asking for a 'cafe', 'restaurant', or 'hotel'."
-        })
-    # -----------------------------------------------------------------
 
     if u_session["last_places"] and msg_lower in ["1", "2", "3", "4", "5", "option 1", "option 2", "option 3", "option 4", "option 5"]:
         idx_map = {"1": 0, "option 1": 0, "2": 1, "option 2": 1, "3": 2, "option 3": 2, "4": 3, "option 4": 3, "5": 4, "option 5": 4}
@@ -668,6 +665,7 @@ def get_response():
     
     global_matched_place = find_place_globally(msg, ALL_PLACES)
     if global_matched_place:
+        # If the user explicitly asked "where is X", show X immediately
         if any(k in msg_lower for k in ["where", "how to get", "find", "locate"]):
             p_name = str(get_place_attr(global_matched_place, ["Business name", "business_name", "name"]))
             p_city = str(get_place_attr(global_matched_place, ["Municipality or city", "Municipality/City", "municipality_city", "city", "municipality", "Municipality"]))
@@ -678,17 +676,13 @@ def get_response():
             
             reply = f"<b>{p_name}</b> is located in <b>{p_city}</b>.<br><br>" + format_single_place_detail(global_matched_place)
             return jsonify({"reply": reply})
-
-    constraints = extract_constraints_nlp(msg)
-
+    
     has_meaningful_intent = (
         constraints.get("category") or 
         constraints.get("dish") or 
         constraints.get("required_features") or 
         constraints.get("locations") or
-        constraints.get("max_budget") is not None or
-        constraints.get("target_opening_time") is not None or
-        constraints.get("target_closing_time") is not None
+        constraints.get("max_budget") is not None
     )
     
     if not has_meaningful_intent:
@@ -698,34 +692,29 @@ def get_response():
             })
             
         return jsonify({
-            "reply": "I'm sorry, but I can only help you find places to visit, eat, or stay in Ilocos Norte. Try asking for a 'cafe', 'restaurant', or 'hotel' in a specific town."
+            "reply": f"I couldn't find a specific place to search for in your message. 😅 I can help you find places, restaurants, cafes, and more in Ilocos Norte. Try including a category (e.g., 'cafe') or a location (e.g., 'Laoag')."
         })
 
     has_explicit_location = bool(constraints.get("locations"))
 
     last_constraints = u_session.get("last_constraints", {})
-    
-    # Inherit previous budget
+
     if not constraints.get("max_budget") and last_constraints.get("max_budget"):
         if not any(w in msg_lower for w in ["any", "no budget", "unlimited", "expensive", "any price"]):
             constraints["max_budget"] = last_constraints.get("max_budget")
-            
-    # Inherit previous category
+    
     if not constraints.get("category") and not constraints.get("dish") and not constraints.get("required_features") and last_constraints.get("category"):
         clean_query = normalize_text(msg)
         for loc in constraints.get("locations", []):
             clean_query = clean_query.replace(loc, "")
         
-        # Remove filler words
-        clean_query = re.sub(r"\b(in|near|at|around|to|the|a|an|what|about|how|is|are|there|any|for|which|one|opens|open|am|pm|budget|price)\b", "", clean_query).strip()
+        clean_query = re.sub(r"\b(in|near|at|around|to|the|a|an|what|about|how|is|are|there|any|for)\b", "", clean_query).strip()
         
-        if len(clean_query) <= 2: 
+        if len(clean_query) == 0:
             constraints["category"] = last_constraints.get("category")
 
-    # FIX: FORCE the locations array to ONLY use the primary location
-    if constraints.get("location"):
-        constraints["locations"] = [constraints["location"]]
-        u_session["location"] = constraints["location"]
+    if constraints.get("locations"):
+        u_session["location"] = constraints["locations"][-1] # Save the last one mentioned
     elif u_session.get("location"):
         constraints["locations"] = [u_session["location"]]
         constraints["location"] = u_session["location"]
