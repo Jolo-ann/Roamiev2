@@ -2,13 +2,12 @@
 const chatForm = document.getElementById('chat-form');
 const userInput = document.getElementById('user-input');
 const chatBox = document.getElementById('chat-box');
-const noticeBanner = document.getElementById('notice-banner'); // Added
+const noticeBanner = document.getElementById('notice-banner'); 
 
 const aboutBtn = document.getElementById('aboutBtn');
 const aboutModal = document.getElementById('aboutModal');
 const closeModalBtn = document.getElementById('closeModalBtn');
 
-// --- WEATHER DROPDOWN LISTENER ---
 const weatherSelect = document.getElementById('weatherLocationSelect');
 if (weatherSelect) {
     weatherSelect.onchange = (e) => {
@@ -40,7 +39,6 @@ chatForm.addEventListener('submit', async (e) => {
     appendMessage(message, 'user-message');
     userInput.value = '';
 
-    // Hide the notice banner once the user starts chatting
     if (noticeBanner) noticeBanner.style.display = 'none';
 
     await sendMessageToServer(message);
@@ -48,12 +46,18 @@ chatForm.addEventListener('submit', async (e) => {
 
 async function sendChoice(val, label) {
     appendMessage(label || `View details for #${val}`, 'user-message');
-    // Hide the notice banner if a button is clicked
     if (noticeBanner) noticeBanner.style.display = 'none';
     await sendMessageToServer(val);
 }
 
 async function sendMessageToServer(messageText) {
+    const submitBtn = chatForm.querySelector('button[type="submit"]');
+    const originalBtnHTML = submitBtn.innerHTML;
+
+    userInput.disabled = true;
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<span style="font-size: 1.2rem;">⏳</span>'; 
+
     const typingIndicator = showTypingIndicator();
 
     try {
@@ -69,6 +73,11 @@ async function sendMessageToServer(messageText) {
     } catch (error) {
         removeTypingIndicator(typingIndicator);
         appendMessage("Error: Could not process request.", 'bot-message');
+    } finally {
+        userInput.disabled = false;
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = originalBtnHTML;
+        userInput.focus(); 
     }
 }
 
@@ -106,10 +115,6 @@ function removeTypingIndicator(element) {
         element.parentNode.removeChild(element);
     }
 }
-
-/* ==========================================================================
-   WEATHER FEATURE (Fallback for Dropdown)
-   ========================================================================== */
 
 const MUNICIPALITY_COORDINATES = {
     "laoag": { lat: 18.1960, lon: 120.5927, name: "Laoag City" },
@@ -164,12 +169,14 @@ async function fetchWeather(locationKey) {
             const wind = data.current_weather.windspeed;
             const condition = WEATHER_CODES[code] || "🌤️ Fair";
 
+            // FIX: Remove the typing indicator BEFORE displaying the weather card
+            removeTypingIndicator(typingIndicator); 
             displayWeatherCard(loc.name, temp, condition, wind);
+            
         } else {
             throw new Error("Invalid data");
         }
     } catch (error) {
-        // If the JS fetch fails, send a message to the backend to fetch it instead!
         removeTypingIndicator(typingIndicator);
         sendMessageToServer(`What is the weather in ${loc.name}?`);
     } finally {

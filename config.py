@@ -1,4 +1,3 @@
-# config.py
 STATE_AWAITING_NAME = "AWAITING_NAME"
 STATE_IDLE = "IDLE"
 
@@ -38,13 +37,16 @@ CATEGORY_SYNONYMS = {
         "church", "historical site", "destination", "place to visit",
         "museum", "heritage site", "viewpoint", "eco-tourism", "scenic spot", "nature preserve"
     ],
+    "cinema": ["cinema", "movie theater", "movie theatre", "theater", "theatre", "watch movies", "movies"],
     "restaurant": [
         "restaurant", "restaurants", "resto", "bistro", "eatery",
         "dining", "diner", "grill", "steak", "wings", "pasta", "sushi", "ramen", "seafood",
         "bbq", "barbecue", "fastfood", "fast food", "empanada", "empanadaan",
         "bagnet", "poqui-poqui", "poquipoqui", "poqui poqui", "ilocano food", "local dishes",
         "carinderia", "snack bar", "food stall", "food stalls",
-        "catering", "catering services", "food court", "foodcourt", "street food", "local delicacy stall"
+        "catering", "catering services", "food court", "foodcourt", "street food", "local delicacy stall",
+        "noodle soup", "noodles", "soup", "mami", "lomi",
+        "grilled", "grilled food", "grilled dishes"
     ],
     "bakery": [
         "bakery", "bakeshop", "cake", "cakes", "pastry", "pastries", "bread", "breads", "dessert", "desserts"
@@ -61,10 +63,10 @@ CATEGORY_SYNONYMS = {
     "airport": ["airport", "airplanes", "airplane", "flights", "flight", "fly", "flying", "plane", "planes", "travel by air", "travel via airplane"],
     "mall": [
         "mall", "malls", "shopping mall", "shopping center", "department store", "plaza",
-        "public market", "marketplace", "commercial center", "souvenir shop", "pasalubong center", "pasalubong", "retail"
+        "public market", "marketplace", "commercial center", "souvenir shop", "pasalubong center", "pasalubong"
     ],
     "karaoke": ["karaoke", "ktv", "singing", "music lounge", "videoke"],
-    "dealership": ["dealership", "motorcycle", "motorcycles", "car dealership", "showroom", "auto sales", "toyota", "honda", "yamaha"],
+    "dealership": ["dealership", "motorcycle", "motorcycles", "car dealership", "showroom", "auto sales", "toyota", "honda", "yamaha", "motor", "motors"],
     "auto parts": ["motorparts", "motor parts", "auto parts", "spare parts", "motorcycle repair", "auto repair", "vulcanizing", "vulcanizing shop", "repair shop"],
     "hardware": ["hardware", "hardware store", "hardware stores", "construction supplies", "lumber", "tools"],
     "computer shop": ["computer shop", "internet cafe", "cyber cafe", "gaming hub", "pc shop", "piso net", "computer repair"],
@@ -73,8 +75,8 @@ CATEGORY_SYNONYMS = {
     "hospital": [
         "hospital", "medical center", "clinic", "health center", "infirmary", "healthcare", "medical clinic", "surgical specialist", "doctor"
     ],
-    "vet": ["vet", "veterinary", "animal clinic", "pet clinic"],
-    "pharmacy": ["pharmacy", "pharmacies", "drugstore"],
+    "vet": ["vet", "veterinary", "animal clinic", "pet clinic", "veterinarian", "cat", "dog", "animal", "checkup"],
+    "pharmacy": ["pharmacy", "pharmacies", "drugstore", "drugs", "medicine", "medicines"],
     "bank": [
         "bank", "banks", "atm", "banking", "pawnshop", "pawn shop", "pawnshops",
         "transfer", "transfer money", "transfer my money", "send money", "money transfer", 
@@ -83,7 +85,7 @@ CATEGORY_SYNONYMS = {
     "gas station": ["gas station", "gasoline station", "gasoline", "gas", "fuel", "petrol", "petrol station"],
     "supermarket": [
         "supermarket", "supermarkets", "grocery", "grocery store", "groceries",
-        "mart", "convenience store", "hypermarket", "variety store", "general merchandise"
+        "mart", "convenience store", "hypermarket", "variety store", "general merchandise", "fridge"
     ],
     "laundry": ["laundry", "laundry service", "laundry shop", "dry cleaning", "wash and fold"],
     "school": ["school", "elementary school", "high school", "integrated school", "educational network"],
@@ -92,11 +94,15 @@ CATEGORY_SYNONYMS = {
 
 LOCAL_DISHES = [
     "salmon", "empanada", "bagnet", "poqui poqui", "poqui-poqui", "poquipoqui",
-    "longganisa", "igado", "dinakdakan", "pinakbet", "royal bibingka", "miki"
+    "longganisa", "igado", "dinakdakan", "pinakbet", "royal bibingka", "miki",
+    "noodles", "noodle soup", "pancit", "mami", "lomi",
+    "grilled chicken", "inasal", "bbq", "samgyupsal", "grilled food",
+    "pizza", "pasta"
 ]
 
 FEATURE_ALIASES = {
     "parking": ["parking", "parking space", "car park", "parking lot", "with parking", "has parking"],
+    "drive-thru": ["drive-thru", "drive thru", "drivethru"],
     "wifi": ["wifi", "wi-fi", "internet", "free wifi", "free wi-fi", "internet access", "good wifi", "good wi-fi", "working"],
     "ktv": ["ktv", "karaoke", "singing room", "videoke"],
     "pet-friendly": ["pet", "pets", "pet-friendly", "pet friendly", "dog friendly", "cat friendly"],
@@ -111,7 +117,6 @@ FEATURE_KEYWORDS = list(FEATURE_ALIASES.keys())
 THINKING_PHRASES = {"still thinking", "wait", "hold on", "give me a sec", "give me a minute", "thinking", "not sure yet", "wait a bit"}
 READY_PHRASES = {"im ready", "i'm ready", "ready", "ok ready", "okay ready"}
 GREETINGS = {"hello", "hi", "hey", "sup", "good morning", "good afternoon", "good evening"}
-# REMOVED "ty" TO FIX THE "thirsty" BUG
 THANKS_PHRASES = {"thanks", "thank you", "thx", "thank you so much", "salamat"}
 CONVERSATIONAL_FILLER = {
     "i dont know", "i don't know", "sure", "searching for laoag", "yes", "no", "maybe", 

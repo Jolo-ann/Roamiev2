@@ -1,4 +1,3 @@
-# app.py
 import json
 import re
 import math
@@ -22,7 +21,6 @@ from nlp_engine import (
 app = Flask(__name__)
 app.secret_key = "roamie_production_key_fixed"
 
-# --- HELPER FOR WORD BOUNDARY MATCHING ---
 def contains_phrase(text, phrases):
     for phrase in phrases:
         if len(phrase) <= 3:
@@ -33,7 +31,6 @@ def contains_phrase(text, phrases):
                 return True
     return False
 
-# --- WEATHER DATA ---
 WEATHER_COORDS = {
     "laoag": {"lat": 18.1960, "lon": 120.5927, "name": "Laoag City"},
     "batac": {"lat": 18.0556, "lon": 120.5650, "name": "Batac City"},
@@ -58,11 +55,11 @@ WEATHER_COORDS = {
 }
 
 WEATHER_CODES_MAP = {
-    0: "☀️ Clear Sky", 1: "🌤️ Mainly Clear", 2: "⛅ Partly Cloudy", 3: "☁️ Overcast",
-    45: "🌫️ Foggy", 48: "🌫️ Depositing Rime Fog", 51: "🌦️ Light Drizzle", 53: "🌦️ Moderate Drizzle",
-    55: "🌧️ Dense Drizzle", 61: "🌧️ Slight Rain", 63: "🌧️ Moderate Rain", 65: "🌧️ Heavy Rain",
-    80: "🌦️ Slight Rain Showers", 81: "🌧️ Moderate Rain Showers", 82: "⛈️ Violent Rain Showers",
-    95: "⛈️ Thunderstorm"
+    0: "Clear Sky", 1: "Mainly Clear", 2: "Partly Cloudy", 3: "Overcast",
+    45: "Foggy", 48: "Depositing Rime Fog", 51: "Light Drizzle", 53: "Moderate Drizzle",
+    55: "Dense Drizzle", 61: "Slight Rain", 63: "Moderate Rain", 65: "Heavy Rain",
+    80: "Slight Rain Showers", 81: "Moderate Rain Showers", 82: "Violent Rain Showers",
+    95: "Thunderstorm"
 }
 
 MUNICIPALITY_COORDS = {
@@ -134,8 +131,6 @@ def evaluate_category_match(place, requested_category):
     primary_cat = normalize_text(str(get_place_attr(place, ["Category", "category"], "")))
     aliases = CATEGORY_SYNONYMS.get(requested_category, [requested_category])
 
-    # STRICT FIX: ONLY check the primary Category, NOT the Business Name.
-    # This prevents "Petron Gasoline Station - Airport Road" from matching "airport".
     for alias in aliases:
         alias_norm = normalize_text(alias)
         if re.search(rf"\b{re.escape(alias_norm)}\b", primary_cat):
@@ -192,8 +187,18 @@ def place_has_dish(place, dish):
     keywords = " ".join(str(item) for item in keywords_raw) if isinstance(keywords_raw, list) else str(keywords_raw)
     
     combined_content = normalize_text(f"{name} {desc} {keywords}")
-    pattern = r"\b" + re.escape(normalize_text(dish)) + r"\b"
-    return bool(re.search(pattern, combined_content))
+    
+    dish_aliases = {
+        "grilled chicken": ["grilled chicken", "inasal", "grilled", "bbq"],
+        "grilled food": ["grilled", "bbq", "samgyup", "inasal", "grill"],
+        "noodles": ["noodles", "pancit", "mami", "lomi", "miki"],
+        "coffee": ["coffee", "espresso", "latte", "brew"],
+        "pizza": ["pizza", "pizzas"],
+        "pasta": ["pasta", "spaghetti", "carbonara"]
+    }
+    
+    search_terms = dish_aliases.get(dish.lower(), [dish.lower()])
+    return any(re.search(r"\b" + re.escape(term) + r"\b", combined_content) for term in search_terms)
 
 def price_number_from_place(place):
     price = str(get_place_attr(place, ["Price range", "price_range", "Price Range"], ""))
@@ -230,6 +235,7 @@ def score_and_rank_places_nlp(constraints, session_location=None):
     target_close_min = constraints.get("target_closing_time")
     target_day = constraints.get("target_day")
     requested_budget = constraints.get("max_budget")
+    require_24h = constraints.get("require_24h", False)
     
     if isinstance(requested_budget, str):
         match = re.search(r'\d+(?:\.\d+)?', requested_budget)
@@ -253,8 +259,7 @@ def score_and_rank_places_nlp(constraints, session_location=None):
         p_cat = normalize_text(str(get_place_attr(place, ["Category", "category"], "")))
 
         cat_match_level = evaluate_category_match(place, requested_category)
-        
-        # STRICT FIX: If a category is requested, ONLY allow primary matches.
+
         if requested_category:
             if cat_match_level < 2:
                 continue
@@ -276,14 +281,20 @@ def score_and_rank_places_nlp(constraints, session_location=None):
         raw_hours = get_place_attr(place, ["Opening and closing hours", "opening_closing_hours", "Operating Hours", "hours"])
         place_open_min, place_close_min = extract_operating_bounds(raw_hours, target_day=target_day)
 
+        if require_24h:
+            if not (place_open_min == 0 and place_close_min == 1440):
+                continue
+
         if target_open_min is not None:
             if place_open_min is None or place_close_min is None:
                 continue
-            if not (place_open_min <= target_open_min < place_close_min):
+            if place_open_min > target_open_min:
                 continue
 
         if target_close_min is not None:
-            if place_close_min is None or place_close_min != target_close_min:
+            if place_close_min is None:
+                continue
+            if place_close_min != target_close_min and place_close_min != 1440:
                 continue
 
         if requested_features:
@@ -464,7 +475,7 @@ def format_place_output(ranked_results, constraints=None, current_location="Laoa
             reply = f"I couldn't find any matching places in <b>{loc_display}</b>.<br><br>"
         
         if req_budget is not None:
-            reply += f"💡 <b>Tip</b>: The places I know in this area usually start at a higher price. Try increasing your budget!<br><br>"
+            reply += f"<b>Tip</b>: The places I know in this area usually start at a higher price. Try increasing your budget!<br><br>"
             
         reply += f"<b>What would you like to do?</b><br>"
         reply += f"• Try increasing your budget or relaxing filters.<br>"
@@ -474,7 +485,7 @@ def format_place_output(ranked_results, constraints=None, current_location="Laoa
     reply = f"📍 <i>Currently searching in <b>{loc_display}</b></i>"
     
     if not has_explicit_location:
-        reply += f"<br>💡 <i>Are you still searching in <b>{loc_display}</b>, or would you like to try a different city/municipality (e.g., San Nicolas, Batac, Bacarra)?</i>"
+        reply += f"<br><i>Are you still searching in <b>{loc_display}</b>, or would you like to try a different city/municipality (e.g., San Nicolas, Batac, Bacarra)?</i>"
 
     reply += "<br><br>Here are the top matching places for your search:<br><br>"
     
@@ -498,23 +509,23 @@ def format_place_output(ranked_results, constraints=None, current_location="Laoa
         reply += f"<b>{idx}. {name}</b> ({cat})<br>"
         if distance is not None:
             reply += f"<b>Distance</b>: {distance} km from {ref_name}<br>"
-        reply += f"📍 <b>Location</b>: {city}<br>"
-        reply += f"⏰ <b>Hours</b>: {hours}<br>"
-        reply += f"💰 <b>Price</b>: {price}<br>"
-        reply += f"🔍 <b>Match Score</b>: {score}/100<br>"
+        reply += f"<b>Location</b>: {city}<br>"
+        reply += f"<b>Hours</b>: {hours}<br>"
+        reply += f"<b>Price</b>: {price}<br>"
+        reply += f"<b>✅ Match Score</b>: {score}/100<br>"
 
         if req_dish and place_has_dish(place, req_dish):
-            reply += f"• ✅ <b>Dish Match</b>: Serves '<i>{req_dish}</i>'.<br>"
+            reply += f" <b>✅ Dish Match</b>: Serves '<i>{req_dish}</i>'.<br>"
         elif req_cat:
-            reply += f"• ✅ <b>Category Match</b>: Matches '<i>{req_cat}</i>'.<br>"
+            reply += f" <b>✅ Category Match</b>: Matches '<i>{req_cat}</i>'.<br>"
             
         if req_loc:
-            reply += f"• ✅ <b>Location Match</b>: Located in '<i>{city}</i>'.<br>"
+            reply += f" <b>✅ Location Match</b>: Located in '<i>{city}</i>'.<br>"
             
         if req_features:
             matched_feats = [f for f in req_features if place_has_feature(place, f)]
             if matched_feats:
-                reply += f"• ✅ <b>Feature Match</b>: Includes {', '.join(matched_feats)}.<br>"
+                reply += f"• <b>✅ Feature Match</b>: Includes {', '.join(matched_feats)}.<br>"
 
         clean_name = name.replace("'", "\\'")
         reply += f"<button class='inline-place-btn' onclick=\"sendChoice('{idx}', 'View details for #{idx}: {clean_name}')\">View #{idx} Details</button><br>"
@@ -544,19 +555,19 @@ def format_single_place_detail(item):
         maps_url = f"https://www.google.com/maps/search/?api=1&query={search_query}"
 
     reply = f"Here are the full details for <b>{name}</b>:<br><br>"
-    reply += f"🏢 <b>Category</b>: {cat}<br>"
-    reply += f"📍 <b>Location</b>: {city}<br>"
-    reply += f"⏰ <b>Hours</b>: {hours}<br>"
-    reply += f"💰 <b>Price Range</b>: {price}<br>"
+    reply += f"<b>Category</b>: {cat}<br>"
+    reply += f"<b>Location</b>: {city}<br>"
+    reply += f"<b>Hours</b>: {hours}<br>"
+    reply += f"<b>Price Range</b>: {price}<br>"
 
     if features and features != "N/A":
-        reply += f"✨ <b>Features</b>: {features}<br>"
+        reply += f"<b>Features</b>: {features}<br>"
 
     if score is not None:
-        reply += f"<br>📊 <b>Match Score</b>: {score}/100<br>"
+        reply += f"<br><b>✅ Match Score</b>: {score}/100<br>"
 
-    reply += f"<br>🗺️ <b>Google Maps</b>: <a href='{maps_url}' target='_blank' style='color: #38bdf8; text-decoration: underline;'>Open in Google Maps ↗</a><br>"
-    reply += f"<br>📝 <b>Description</b>:<br>{description}"
+    reply += f"<br><b>Google Maps</b>: <a href='{maps_url}' target='_blank' style='color: #38bdf8; text-decoration: underline;'>Open in Google Maps ↗</a><br>"
+    reply += f"<br><b>Description</b>:<br>{description}"
 
     return reply
 
@@ -628,18 +639,18 @@ def get_response():
                 temp = round(api_data["current_weather"]["temperature"])
                 wind = api_data["current_weather"]["windspeed"]
                 code = api_data["current_weather"]["weathercode"]
-                condition = WEATHER_CODES_MAP.get(code, "🌤️ Fair")
+                condition = WEATHER_CODES_MAP.get(code, "Fair")
                 
                 reply = f"📍 <b>Current Weather in {coords['name']}</b><br><br>"
-                reply += f"🌡️ <b>Temperature</b>: {temp}°C<br>"
-                reply += f"☁️ <b>Condition</b>: {condition}<br>"
-                reply += f"💨 <b>Wind Speed</b>: {wind} km/h<br><br>"
-                reply += f"<i>(You can also check other areas using the 🌤️ Weather dropdown at the top right!)</i>"
+                reply += f"<b>Temperature</b>: {temp}°C<br>"
+                reply += f"<b>Condition</b>: {condition}<br>"
+                reply += f"<b>Wind Speed</b>: {wind} km/h<br><br>"
+                reply += f"<i>(You can also check other areas using the Weather dropdown at the top right!)</i>"
                 return jsonify({"reply": reply})
         except Exception as e:
             print(f"Weather API Error: {e}")
             return jsonify({
-                "reply": "I couldn't fetch the weather right now. Please check your internet connection or try clicking the <b>🌤️ Weather</b> dropdown button."
+                "reply": "I couldn't fetch the weather right now. Please check your internet connection or try clicking the <b>Weather</b> dropdown button."
             })
 
     if msg_lower in THINKING_PHRASES:
@@ -653,7 +664,7 @@ def get_response():
         return jsonify({"reply": f"Hello! I am currently set to search in <b>{current_loc}</b>. How can I help you explore Ilocos Norte right now?"})
 
     if contains_phrase(msg_lower, THANKS_PHRASES):
-        return jsonify({"reply": "You're very welcome! 😊 Is there anything else I can help you find in Ilocos Norte?"})
+        return jsonify({"reply": "You're very welcome! Is there anything else I can help you find in Ilocos Norte?"})
 
     if u_session["last_places"] and msg_lower in ["1", "2", "3", "4", "5", "option 1", "option 2", "option 3", "option 4", "option 5"]:
         idx_map = {"1": 0, "option 1": 0, "2": 1, "option 2": 1, "3": 2, "option 3": 2, "4": 3, "option 4": 3, "5": 4, "option 5": 4}
@@ -662,11 +673,23 @@ def get_response():
             chosen_item = u_session["last_places"][selected_idx]
             return jsonify({"reply": format_single_place_detail(chosen_item)})
 
+    if u_session.get("last_places") and len(msg_lower.split()) <= 5 and any(w in msg_lower for w in ["wifi", "parking", "aircon", "outdoor"]):
+        features = detect_feature_entities(msg_lower)
+        if features:
+            filtered = []
+            for item in u_session["last_places"]:
+                if all(place_has_feature(item["place"], f) for f in features):
+                    filtered.append(item)
+            if filtered:
+                u_session["last_places"] = filtered
+                return jsonify({"reply": format_place_output(filtered, constraints={"required_features": features}, current_location=u_session.get("location"))})
+            else:
+                return jsonify({"reply": "None of the previous places have those specific features. Would you like to search again?"})
+
     constraints = extract_constraints_nlp(msg)
     global_matched_place = find_place_globally(msg, ALL_PLACES)
     is_nearby_query = any(w in msg_lower for w in ["nearest", "near", "close", "malapit", "around", "nearby"])
     
-    # --- FIX: Handle follow-up questions about the current list (e.g., "which one opens at 9am?") ---
     if (msg_lower.startswith("which one") or msg_lower.startswith("which of") or msg_lower.startswith("which is")) and u_session.get("last_places"):
         target_open_min = constraints.get("target_opening_time")
         target_day = constraints.get("target_day")
@@ -689,24 +712,20 @@ def get_response():
         else:
             return jsonify({"reply": "None of the previous places match that specific time. Would you like to search again?"})
 
-    # --- FIX: Universal Context Inheritance (e.g., "how about restaurants?") ---
     last_constraints = u_session.get("last_constraints", {})
     is_refinement = bool(re.search(r'\b(how about|what about|under|below|less than|max)\b', msg_lower)) or re.match(r'^[^\w]*\d+[^\w]*$', msg_lower)
-    is_followup = is_refinement or len(msg_lower.split()) < 5
+    is_followup = is_refinement or len(msg_lower.split()) < 4
 
     if is_followup:
-        # If no category is specified, inherit it
         if not constraints.get("category") and not constraints.get("dish") and not constraints.get("required_features"):
             if last_constraints.get("category"):
                 constraints["category"] = last_constraints.get("category")
             if not constraints.get("dish") and last_constraints.get("dish"):
                 constraints["dish"] = last_constraints.get("dish")
         
-        # If no budget is specified, inherit it!
         if constraints.get("max_budget") is None and last_constraints.get("max_budget") is not None:
             constraints["max_budget"] = last_constraints.get("max_budget")
             
-        # If no location is specified, inherit it!
         if not constraints.get("locations") and last_constraints.get("locations"):
             constraints["locations"] = last_constraints.get("locations")
 
@@ -719,16 +738,19 @@ def get_response():
         global_matched_place is not None
     )
 
-    # --- FIX: Proximity search near a specific place ---
     if global_matched_place and is_nearby_query:
-        constraints["reference_place"] = global_matched_place
-        p_city = str(get_place_attr(global_matched_place, ["Municipality or city", "Municipality/City", "municipality_city", "city", "municipality", "Municipality"]))
-        if p_city:
-            u_session["location"] = p_city.lower()
-            constraints["locations"] = [p_city.lower()]
+        p_city = str(get_place_attr(global_matched_place, ["Municipality or city", "Municipality/City", "municipality_city", "city", "municipality", "Municipality"])).lower()
+        explicit_locations = constraints.get("locations", [])
+        
+        if explicit_locations and p_city and not any(loc in p_city or p_city in loc for loc in explicit_locations):
+            global_matched_place = None
+        else:
+            constraints["reference_place"] = global_matched_place
+            if p_city:
+                u_session["location"] = p_city
+                constraints["locations"] = [p_city]
 
-    # --- FIX: "Where is X?" lookup (Don't overwrite session location!) ---
-    if global_matched_place and not is_nearby_query and any(k in msg_lower for k in ["where", "how to get", "eat at", "go to", "view", "find"]):
+    if global_matched_place and not is_nearby_query and any(k in msg_lower for k in ["where is", "location of", "how to get to", "find the location of"]):
         p_name = str(get_place_attr(global_matched_place, ["Business name", "business_name", "name"]))
         p_city = str(get_place_attr(global_matched_place, ["Municipality or city", "Municipality/City", "municipality_city", "city", "municipality", "Municipality"]))
         
@@ -745,12 +767,11 @@ def get_response():
             })
             
         return jsonify({
-            "reply": f"I couldn't find a specific place to search for in your message. 😅 I can help you find places, restaurants, cafes, and more in Ilocos Norte. Try including a category (e.g., 'cafe') or a location (e.g., 'Laoag')."
+            "reply": f"I couldn't find a specific place to search for in your message. I can help you find places, restaurants, cafes, and more in Ilocos Norte. Try including a category (e.g., 'cafe') or a location (e.g., 'Laoag')."
         })
 
     has_explicit_location = bool(constraints.get("locations"))
 
-    # --- FIX: Pick the LAST mentioned location, and throw away the rest! ---
     if constraints.get("locations"):
         target_loc = constraints["locations"][-1]
         u_session["location"] = target_loc

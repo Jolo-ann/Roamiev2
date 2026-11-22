@@ -186,7 +186,6 @@ body {
     border-radius: 10px;
 }
 
-/* --- NEW: Notice Banner Styles --- */
 .notice-banner {
     background: rgba(56, 189, 248, 0.08);
     border-left: 4px solid #38bdf8;
@@ -214,7 +213,6 @@ body {
     border-top: 1px solid rgba(255,255,255,0.1);
     padding-top: 8px;
 }
-/* -------------------------------- */
 
 .message {
     max-width: 82%;
@@ -248,7 +246,6 @@ body {
     box-shadow: 0 4px 14px rgba(2, 132, 199, 0.3);
 }
 
-/* Action Choice Buttons Styling */
 .action-buttons-container {
     display: flex;
     flex-wrap: wrap;
@@ -435,7 +432,6 @@ input::placeholder {
     border: 1px solid var(--border-color);
 }
 
-/* Inline Place Buttons */
 .inline-detail-btn {
     background: linear-gradient(135deg, rgba(20, 184, 166, 0.3), rgba(2, 132, 199, 0.4));
     border: 1px solid var(--accent-teal);
@@ -482,7 +478,6 @@ input::placeholder {
     box-shadow: 0 4px 12px rgba(20, 184, 166, 0.4);
 }
 
-/* Weather Select Dropdown Glassmorphic Styling */
 .weather-widget-container select {
     background: rgba(255, 255, 255, 0.08);
     color: var(--text-primary);
@@ -512,7 +507,6 @@ input::placeholder {
     color: #f8fafc;
 }
 
-/* Weather Message Card Styling */
 .weather-card {
     padding: 4px 2px;
 }
@@ -542,7 +536,6 @@ input::placeholder {
     color: var(--text-secondary);
 }
 
-/* Responsive Adjustments */
 @media (max-width: 520px) {
     .action-buttons-container {
         max-width: 100%;
@@ -556,4 +549,17 @@ input::placeholder {
     .notice-banner {
         max-width: 100%;
     }
+}
+
+input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.input-wrapper button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+    background: rgba(15, 23, 42, 0.6);
 }
