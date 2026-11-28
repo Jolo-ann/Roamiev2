@@ -714,7 +714,7 @@ def get_response():
 
     last_constraints = u_session.get("last_constraints", {})
     is_refinement = bool(re.search(r'\b(how about|what about|under|below|less than|max)\b', msg_lower)) or re.match(r'^[^\w]*\d+[^\w]*$', msg_lower)
-    is_followup = is_refinement or len(msg_lower.split()) < 4
+    is_followup = is_refinement or len(msg_lower.split()) < 3
 
     if is_followup:
         if not constraints.get("category") and not constraints.get("dish") and not constraints.get("required_features"):

@@ -288,23 +288,37 @@ def extract_operating_bounds(hours_data, target_day=None):
             return parse_hours_range(day_sch)
     return parse_hours_range(hours_data) if isinstance(hours_data, str) else (None, None)
 
+# In nlp_engine.py, replace parse_opening_time_constraint with this:
 def parse_opening_time_constraint(query_text):
-    m = re.search(r"\b(?:opens?\s*at|opening\s*at|open\s*at|before)\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)", normalize_text(query_text))
+    clean = normalize_text(query_text)
+    # Matches "opens at 9", "open at 9:00 am", "before 9pm", "at around 9:00am", "at 9am"
+    m = re.search(r"\b(?:opens?\s*at|opening\s*at|open\s*at|before|at\s*around|at)\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm))", clean)
+    if not m:
+        # fallback for "at 9" (without am/pm)
+        m = re.search(r"\b(?:opens?\s*at|opening\s*at|open\s*at|before|at\s*around)\s*(\d{1,2}(?::\d{2})?)", clean)
     return parse_time_to_minutes(m.group(1)) if m else None
 
 def parse_closing_time_constraint(query_text):
     clean = normalize_text(query_text)
     if "midnight" in clean and ("until" in clean or "open" in clean or "close" in clean):
         return 24 * 60
-    m = re.search(r"\b(?:closes?\s*at|closing\s*at|close\s*at|open\s*until|until)\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)", clean)
+    m = re.search(r"\b(?:closes?\s*at|closing\s*at|close\s*at|open\s*until|until|till|til)\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)", clean)
     return parse_time_to_minutes(m.group(1)) if m else None
 
+# In nlp_engine.py, replace your parse_budget function with this:
 def parse_budget(query_text):
     clean, candidates = normalize_text(query_text), []
+    
+    # NEW: Strip time formats (e.g., "9:00am", "9am") so they aren't caught as budget
+    clean = re.sub(r'\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b', '', clean, flags=re.IGNORECASE)
+    clean = re.sub(r'\b\d{1,2}:\d{2}\b', '', clean)
+
     patterns = [
         r"(?:₱|php\s*|p\s*)\s*(\d[\d,]*(?:\.\d+)?)",
         r"(\d[\d,]*(?:\.\d+)?)\s*(?:pesos?|php)",
-        r"\b(?:only\s*have|have|budget|under|below|less than|up to|max|cheap|with|spend|buy|for|how about|what about)\b.*?(?:₱|php|p)?\s*(\d[\d,]*)",
+        # Removed "for", "with", "buy" from the aggressive matcher
+        r"\b(?:only\s*have|have|budget|under|below|less than|up to|max|cheap|spend)\b.*?(?:₱|php|p)?\s*(\d[\d,]*)",
+        r"\b(?:how about|what about)\s+(?:₱|php|p)?\s*(\d[\d,]*)",
         r"^\s*(\d[\d,]*)\s*$"
     ]
     for p in patterns:

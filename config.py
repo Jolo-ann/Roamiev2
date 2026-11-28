@@ -63,7 +63,7 @@ CATEGORY_SYNONYMS = {
     "airport": ["airport", "airplanes", "airplane", "flights", "flight", "fly", "flying", "plane", "planes", "travel by air", "travel via airplane"],
     "mall": [
         "mall", "malls", "shopping mall", "shopping center", "department store", "plaza",
-        "public market", "marketplace", "commercial center", "souvenir shop", "pasalubong center", "pasalubong"
+        "public market", "marketplace", "commercial center", "souvenir shop", "pasalubong center", "pasalubong", "shopping"
     ],
     "karaoke": ["karaoke", "ktv", "singing", "music lounge", "videoke"],
     "dealership": ["dealership", "motorcycle", "motorcycles", "car dealership", "showroom", "auto sales", "toyota", "honda", "yamaha", "motor", "motors"],
